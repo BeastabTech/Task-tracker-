@@ -1,0 +1,12 @@
+# Personal data — never shipped. Each install keeps its own tasks.json (auto-created on first
+# run if missing) and its own plane_config.json (built via the in-app "Connect to Plane" flow,
+# or PLANE_* env vars). Neither should ever end up in this repo — one is your work data, the
+# other holds a live session cookie.
+/tasks.json
+/tasks.json.*
+/tasks.xlsx
+webapp/plane_config.json
+
+__pycache__/
+*.pyc
+.DS_Store

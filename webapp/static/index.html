@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Tracker</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <button class="theme-toggle" id="planeSettingsBtn" title="Update Plane cookie">🔌 Plane</button>
+    <button class="theme-toggle" id="themeToggle">🌙 <span id="themeLabel">Dark</span></button>
+  </div>
+
+  <div class="hero">
+    <div>
+      <p class="hero-greeting" id="greeting">Hello 👋</p>
+      <p class="hero-date" id="todayDate"></p>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <section class="update-panel">
+    <div>
+      <p class="eyebrow">Standup update</p>
+      <h2>Yesterday / Today / Backlog</h2>
+    </div>
+    <div class="update-actions">
+      <div class="update-mode" id="updateModeSwitch" aria-label="Update format">
+        <button type="button" class="mode-btn active" data-update-mode="short">Short</button>
+        <button type="button" class="mode-btn" data-update-mode="detailed">Detailed</button>
+      </div>
+      <button class="btn" id="copyBtn">Copy update</button>
+      <button class="btn ghost" id="previewUpdateBtn">Show preview</button>
+    </div>
+    <div class="update-preview-wrap" id="updatePreviewWrap">
+      <button type="button" class="preview-close" id="closeUpdatePreview" aria-label="Close preview">Close</button>
+      <pre class="update-preview" id="updatePreview"></pre>
+    </div>
+  </section>
+
+  <div class="review-grid">
+    <section class="review-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Daily review</p>
+          <h2>Today changed</h2>
+        </div>
+        <button class="mini-btn" data-jump-filter="today">Open</button>
+      </div>
+      <div class="review-list" id="todayPreview"></div>
+    </section>
+    <section class="review-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Backlog focus</p>
+          <h2>Next up</h2>
+        </div>
+        <button class="mini-btn" data-jump-filter="To Do">Open</button>
+      </div>
+      <div class="review-list" id="backlogPreview"></div>
+    </section>
+    <section class="review-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Cleanup</p>
+          <h2>Stale tasks</h2>
+        </div>
+        <button class="mini-btn" data-jump-filter="stale">Open</button>
+      </div>
+      <div class="review-list" id="stalePreview"></div>
+    </section>
+    <section class="review-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Timeline</p>
+          <h2>Recent activity</h2>
+        </div>
+        <button class="mini-btn" data-view-mode="activity">Open</button>
+      </div>
+      <div class="review-list" id="activityPreview"></div>
+    </section>
+  </div>
+
+  <div class="attention" id="attentionPanel">
+    <div class="attention-head" id="attentionToggle">
+      <div>
+        <p class="eyebrow">Active work</p>
+        <h2 id="attentionTitle">Needs attention</h2>
+      </div>
+      <span class="toggle" id="attentionArrow">▾</span>
+    </div>
+    <div class="attention-list" id="attentionList"></div>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="Search tasks…">
+    <span class="chip active" data-filter="all">All</span>
+    <span class="chip" data-filter="To Do">To Do</span>
+    <span class="chip" data-filter="In Progress">In Progress</span>
+    <span class="chip" data-filter="In Review">In Review</span>
+    <span class="chip" data-filter="Pending">Pending</span>
+    <span class="chip" data-filter="Done">Done</span>
+    <span class="chip" data-filter="Cancelled">Cancelled</span>
+    <span class="chip" data-filter="today">Today</span>
+    <span class="chip" data-filter="overdue">Overdue</span>
+    <span class="chip" data-filter="high">High priority</span>
+    <span class="chip" data-filter="stale">Stale</span>
+    <span class="chip" data-filter="review">Reviews</span>
+    <span class="chip" data-filter="archived">Archived</span>
+    <select id="projectFilter"><option value="">All projects</option></select>
+    <select id="tagFilter"><option value="">All tags</option></select>
+    <label class="date-label">From <input type="date" id="dateFrom"></label>
+    <label class="date-label">To <input type="date" id="dateTo"></label>
+    <label class="date-label">Backlog <input type="number" id="backlogLimit" min="0" max="20" step="1"></label>
+    <button class="btn ghost" id="clearFilters">Clear filters</button>
+    <button class="btn ghost" id="exportExcelBtn">⬇ Export as Excel</button>
+  </div>
+
+  <form id="addForm">
+    <div class="quick-add">
+      <input type="text" id="quickTitle" placeholder="Quick add: task p1 #project @tag due:tomorrow" required>
+      <button type="button" class="btn secondary" id="moreOptionsBtn">More options</button>
+      <button type="submit" class="btn">Add</button>
+    </div>
+    <div class="quick-preview" id="quickPreview"></div>
+    <div class="add-form" id="moreOptions">
+      <div class="row">
+        <label class="date-label">Discussed from <input type="date" id="newDiscussedFrom"></label>
+        <label class="date-label">to <input type="date" id="newDiscussedTo"></label>
+        <select id="newStatus"></select>
+        <select id="newPriority"></select>
+        <select id="newType"></select>
+        <label class="date-label">Start <input type="date" id="newStartDate"></label>
+        <label class="date-label">Due <input type="date" id="newDueDate"></label>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Project</span>
+        <div class="chip-field" id="newProjectField"><input type="text" class="chip-input" id="newProjectInput" list="dl-project" placeholder="+ add"></div>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Tags</span>
+        <div class="chip-field" id="newTagsField"><input type="text" class="chip-input" id="newTagsInput" list="dl-tags" placeholder="+ add"></div>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Stakeholders</span>
+        <div class="chip-field" id="newWhoField"><input type="text" class="chip-input" id="newWhoInput" list="dl-who" placeholder="+ add"></div>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Files</span>
+        <div class="chip-field" id="newAttachField"><input type="text" class="chip-input" id="newAttachInput" placeholder="+ paste link/path"></div>
+      </div>
+      <div class="row">
+        <input type="text" id="newNotes" placeholder="Notes (optional)">
+        <input type="text" id="newCancelReason" placeholder="Cancel reason (optional)">
+      </div>
+    </div>
+  </form>
+
+  <div class="board-head">
+    <div>
+      <p class="eyebrow">Task list</p>
+      <h2 id="boardTitle">All tasks</h2>
+    </div>
+    <div class="board-actions">
+      <div class="view-switch" id="viewSwitch">
+        <button type="button" class="view-btn active" data-view-mode="list">List</button>
+        <button type="button" class="view-btn" data-view-mode="board">Board</button>
+        <button type="button" class="view-btn" data-view-mode="activity">Activity</button>
+      </div>
+      <span class="result-count" id="resultCount"></span>
+    </div>
+  </div>
+  <div id="board"></div>
+
+  <datalist id="dl-project"></datalist>
+  <datalist id="dl-tags"></datalist>
+  <datalist id="dl-who"></datalist>
+
+  <footer>Local task tracker · reads and writes tasks.json directly</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
