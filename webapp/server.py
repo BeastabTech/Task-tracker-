@@ -101,6 +101,16 @@ def append_activity(task, activity):
     return True
 
 
+def append_activity_tracked(task, activity, sink):
+    """Same as append_activity, but also records the activity in `sink` when it was actually
+    added (not a dedup no-op) — lets a request handler know exactly what changed just now, so it
+    can auto-sync only that diff to Plane. See sync_plane_on_activity."""
+    if append_activity(task, activity):
+        sink.append(activity)
+        return True
+    return False
+
+
 def sort_history(history):
     history.sort(key=lambda a: (a.get("at") or a.get("date") or "", ACTIVITY_ORDER.get(a.get("type"), 99)))
 
@@ -531,11 +541,37 @@ def create_plane_issue(task):
     return {"plane_issue_id": issue_id, "plane_url": plane_url}
 
 
+def _push_plane_core_fields(cfg, task, issue_id):
+    """Shared PATCH payload builder — pushes title/notes/status/priority/dates/assignee onto an
+    already-linked Plane issue. Returns an {"error": ...} dict on failure, None on success.
+    Used by both the manual 'Update in Plane' button and the automatic activity-triggered sync,
+    so the two never drift apart."""
+    notes = (task.get("notes") or "").strip()
+    desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
+    payload = {
+        "name": task.get("title", "Untitled task")[:255],
+        "description_html": desc_html,
+        "state_id": plane_state_id(cfg, task.get("status")),
+        "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
+        "assignee_ids": [cfg.get("assignee_id")],
+        "start_date": task.get("discussed_from") or None,
+        "target_date": task.get("due_date") or None,
+    }
+    workspace = cfg.get("workspace")
+    project_id = cfg.get("project_id")
+    status, data, raw = _plane_request(cfg, "PATCH", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/", payload)
+    if status is None:
+        return {"error": f"Could not reach Plane: {raw}"}
+    if status < 200 or status >= 300:
+        return {"error": f"Plane API error {status}: {(raw or '')[:300]}"}
+    return None
+
+
 def update_plane_issue(task):
-    """Pushes the task's CURRENT local state onto its already-linked Plane issue.
-    Manual/on-demand only — never called automatically on a field edit. Updates the issue's
-    core fields + description (notes), then adds a fresh comment with the current bookkeeping
-    block so the change shows up in Plane's Activity feed as a dated update, not a silent overwrite."""
+    """Pushes the task's CURRENT local state onto its already-linked Plane issue, on-demand
+    (the 'Update in Plane' button). Updates the issue's core fields + description (notes), then
+    adds a fresh comment with the full current bookkeeping block. See also sync_plane_on_activity
+    for the automatic, per-edit version of this."""
     cfg = load_plane_config()
     cookie = cfg.get("cookie")
     workspace = cfg.get("workspace")
@@ -545,31 +581,109 @@ def update_plane_issue(task):
         return {"error": "Plane is not configured yet — set the cookie in Plane settings first."}
     if not issue_id:
         return {"error": "This task isn't linked to a Plane issue yet — use Send to Plane first."}
-    assignee_id = cfg.get("assignee_id")
-    if not assignee_id:
+    if not cfg.get("assignee_id"):
         return {"error": "Plane connected but your user id wasn't detected yet — reopen Plane settings and save again."}
 
-    notes = (task.get("notes") or "").strip()
-    desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
-    payload = {
-        "name": task.get("title", "Untitled task")[:255],
-        "description_html": desc_html,
-        "state_id": plane_state_id(cfg, task.get("status")),
-        "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
-        "assignee_ids": [assignee_id],
-        "start_date": task.get("discussed_from") or None,
-        "target_date": task.get("due_date") or None,
-    }
-    status, data, raw = _plane_request(cfg, "PATCH", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/", payload)
-    if status is None:
-        return {"error": f"Could not reach Plane: {raw}"}
-    if status < 200 or status >= 300:
-        return {"error": f"Plane API error {status}: {raw[:300]}"}
+    err = _push_plane_core_fields(cfg, task, issue_id)
+    if err:
+        return err
 
     comment_html = plane_meta_comment_html(task)
     _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/comments/", {"comment_html": comment_html})
 
     return {"ok": True, "plane_url": task.get("plane_url")}
+
+
+ACTIVITY_FIELD_LABELS = {
+    "due_date": "Due date",
+    "start_date": "Start date",
+    "discussed_from": "Discussed from",
+    "discussed_to": "Discussed to",
+    "done_at": "Done date",
+    "closed_at": "Closed date",
+    "cancelled_at": "Cancelled date",
+}
+
+
+def plane_activity_diff_comment_html(activities):
+    """Renders just the activity entries that changed in this request as a short Plane comment
+    — e.g. 'Status changed: To Do -> In Progress' — instead of re-dumping the whole bookkeeping
+    snapshot, so Plane's Activity feed reads like an actual changelog of what just happened."""
+    rows = []
+    for a in activities:
+        kind = a.get("type")
+        if kind == "status_changed":
+            row = f'Status changed: {escape_html_py(a.get("from_status") or "—")} → {escape_html_py(a.get("to") or "—")}'
+            if a.get("note"):
+                row += f' — {escape_html_py(a["note"])}'
+            rows.append(row)
+        elif kind == "date_changed":
+            label = ACTIVITY_FIELD_LABELS.get(a.get("field"), a.get("field") or "Date")
+            rows.append(f'{escape_html_py(label)} changed: {escape_html_py(a.get("from_value") or "—")} → {escape_html_py(a.get("to") or "—")}')
+        elif kind == "cancel_reason_changed":
+            rows.append(f'Cancel reason updated: {escape_html_py(a.get("to") or "—")}')
+        elif kind == "completed":
+            rows.append("Marked completed")
+        elif kind == "reopened":
+            rows.append(f'Reopened (was {escape_html_py(a.get("from_status") or "—")})')
+        elif kind == "cancelled":
+            reason = a.get("reason")
+            rows.append(f'Cancelled{" — " + escape_html_py(reason) if reason else ""}')
+        elif kind == "archived":
+            rows.append("Archived in tracker")
+        elif kind == "restored":
+            rows.append("Restored from archive")
+        elif kind == "attachment_added":
+            rows.append(f'Attachment added: {escape_html_py(a.get("label") or "")}')
+        elif kind == "attachment_removed":
+            rows.append(f'Attachment removed: {escape_html_py(a.get("label") or "")}')
+    if not rows:
+        return ""
+    items = "".join(f'<p class="editor-paragraph-block">• {row}</p>' for row in rows)
+    return f'<p class="editor-paragraph-block"><strong>Tracker activity:</strong></p>{items}'
+
+
+def sync_plane_on_activity(task, new_activities):
+    """Automatic counterpart to the manual 'Update in Plane' button: whenever a live edit adds
+    activity to a task that's ALREADY linked to Plane (plane_issue_id set), push the current
+    state + a diff-style comment — no button click needed. Tasks not yet linked are left alone;
+    creating the link itself stays the explicit 'Send to Plane' action. Never raises — a Plane
+    hiccup (expired cookie, network blip) must never break saving the local edit; on failure the
+    caller gets back an {"error": ...} to surface as a soft toast, nothing more."""
+    issue_id = task.get("plane_issue_id")
+    if not issue_id:
+        return None
+    meaningful = [a for a in new_activities if a.get("type") not in ("created", "status_snapshot")]
+    if not meaningful:
+        return None
+    try:
+        cfg = load_plane_config()
+        if not cfg.get("cookie") or not cfg.get("workspace") or not cfg.get("project_id") or not cfg.get("assignee_id"):
+            return {"error": "Plane sync skipped — Plane isn't fully configured (check Plane settings)."}
+
+        err = _push_plane_core_fields(cfg, task, issue_id)
+        if err:
+            return err
+
+        comment_html = plane_activity_diff_comment_html(meaningful)
+        if comment_html:
+            workspace = cfg.get("workspace")
+            project_id = cfg.get("project_id")
+            _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/comments/", {"comment_html": comment_html})
+        return {"ok": True}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
+def apply_plane_auto_sync(task, session_activities):
+    """Call once, right after save_tasks(), with whatever activity this request actually added
+    (via append_activity_tracked). Auto-syncs to Plane if linked; on failure, stamps a transient
+    _plane_sync_error onto the response dict for the frontend to toast — never persisted, since
+    save_tasks already ran with the clean state. Success is silent by design (no toast spam)."""
+    result = sync_plane_on_activity(task, session_activities)
+    if result and result.get("error"):
+        task["_plane_sync_error"] = result["error"]
+    return task
 
 
 def escape_html_py(s):
@@ -856,6 +970,7 @@ class Handler(BaseHTTPRequestHandler):
             data = load_tasks()
             body = self._read_body()
             found = None
+            session_activities = []
             for t in data["tasks"]:
                 if t["id"] == task_id:
                     found = t
@@ -863,7 +978,7 @@ class Handler(BaseHTTPRequestHandler):
                     label = (body.get("label") or body.get("url") or "").strip()
                     if label:
                         t["attachments"].append(label)
-                        append_activity(t, make_activity(t, "attachment_added", label=label))
+                        append_activity_tracked(t, make_activity(t, "attachment_added", label=label), session_activities)
                     now = iso_now()
                     t["updated_at"] = today_local()
                     t["updated_ts"] = now
@@ -872,6 +987,7 @@ class Handler(BaseHTTPRequestHandler):
             if not found:
                 return self._send_json({"error": "not found"}, status=404)
             save_tasks(data)
+            found = apply_plane_auto_sync(found, session_activities)
             return self._send_json(found)
 
         m = re.match(r"^/api/tasks/([^/]+)$", self.path)
@@ -880,6 +996,7 @@ class Handler(BaseHTTPRequestHandler):
             data = load_tasks()
             body = self._read_body()
             found = None
+            session_activities = []
             for t in data["tasks"]:
                 if t["id"] == task_id:
                     found = t
@@ -894,14 +1011,14 @@ class Handler(BaseHTTPRequestHandler):
                         new_reason = (body.get("cancel_reason") or "").strip()
                         if old_reason != new_reason:
                             t["cancel_reason"] = new_reason
-                            append_activity(t, make_activity(t, "cancel_reason_changed", at=now, from_value=old_reason, to=new_reason))
+                            append_activity_tracked(t, make_activity(t, "cancel_reason_changed", at=now, from_value=old_reason, to=new_reason), session_activities)
                     for key in DATE_FIELDS:
                         if key in body:
                             old_value = t.get(key)
                             new_value = clean_date(body.get(key))
                             if old_value != new_value:
                                 t[key] = new_value
-                                append_activity(t, make_activity(t, "date_changed", at=now, field=key, from_value=old_value, to=new_value))
+                                append_activity_tracked(t, make_activity(t, "date_changed", at=now, field=key, from_value=old_value, to=new_value), session_activities)
                     if "status" in body:
                         old_status = t.get("status")
                         new_status = body["status"] if body["status"] in STATUSES else old_status
@@ -911,26 +1028,26 @@ class Handler(BaseHTTPRequestHandler):
                             status_changed_kwargs = {"from_status": old_status, "to": new_status}
                             if status_note:
                                 status_changed_kwargs["note"] = status_note
-                            append_activity(t, make_activity(t, "status_changed", at=now, **status_changed_kwargs))
+                            append_activity_tracked(t, make_activity(t, "status_changed", at=now, **status_changed_kwargs), session_activities)
                             if new_status == "Done" and not t.get("done_at"):
                                 t["done_at"] = today
-                                append_activity(t, make_activity(t, "date_changed", at=now, field="done_at", from_value=None, to=t["done_at"]))
+                                append_activity_tracked(t, make_activity(t, "date_changed", at=now, field="done_at", from_value=None, to=t["done_at"]), session_activities)
                             if new_status == "Done" and not t.get("closed_at"):
                                 t["closed_at"] = today
                             if new_status == "Done":
-                                append_activity(t, make_activity(t, "completed", at=now))
+                                append_activity_tracked(t, make_activity(t, "completed", at=now), session_activities)
                             if new_status == "Cancelled":
                                 if not t.get("cancelled_at"):
                                     t["cancelled_at"] = today
-                                    append_activity(t, make_activity(t, "date_changed", at=now, field="cancelled_at", from_value=None, to=t["cancelled_at"]))
+                                    append_activity_tracked(t, make_activity(t, "date_changed", at=now, field="cancelled_at", from_value=None, to=t["cancelled_at"]), session_activities)
                                 if not t.get("closed_at"):
                                     t["closed_at"] = today
-                                append_activity(t, make_activity(t, "cancelled", at=now, reason=t.get("cancel_reason", "")))
+                                append_activity_tracked(t, make_activity(t, "cancelled", at=now, reason=t.get("cancel_reason", "")), session_activities)
                             if old_status == "Done" and new_status != "Done":
-                                append_activity(t, make_activity(t, "reopened", at=now, from_status=old_status, to=new_status))
+                                append_activity_tracked(t, make_activity(t, "reopened", at=now, from_status=old_status, to=new_status), session_activities)
                             if old_status == "Cancelled" and new_status != "Cancelled":
                                 t["cancelled_at"] = None
-                                append_activity(t, make_activity(t, "reopened", at=now, from_status=old_status, to=new_status))
+                                append_activity_tracked(t, make_activity(t, "reopened", at=now, from_status=old_status, to=new_status), session_activities)
                     if "discussed_from" in body:
                         t["month"] = month_from(t.get("discussed_from"))
                     if "project" in body:
@@ -949,7 +1066,7 @@ class Handler(BaseHTTPRequestHandler):
                         old_archived_at = t.get("archived_at")
                         t["archived_at"] = clean_date(body.get("archived_at"))
                         if old_archived_at != t.get("archived_at"):
-                            append_activity(t, make_activity(t, "archived" if t.get("archived_at") else "restored", at=now))
+                            append_activity_tracked(t, make_activity(t, "archived" if t.get("archived_at") else "restored", at=now), session_activities)
                     t["updated_at"] = today
                     t["updated_ts"] = now
                     normalize_task(t)
@@ -957,6 +1074,7 @@ class Handler(BaseHTTPRequestHandler):
             if not found:
                 return self._send_json({"error": "not found"}, status=404)
             save_tasks(data)
+            found = apply_plane_auto_sync(found, session_activities)
             return self._send_json(found)
         self.send_response(404)
         self.end_headers()
@@ -967,12 +1085,13 @@ class Handler(BaseHTTPRequestHandler):
             task_id, idx = m.group(1), int(m.group(2))
             data = load_tasks()
             found = None
+            session_activities = []
             for t in data["tasks"]:
                 if t["id"] == task_id:
                     found = t
                     if 0 <= idx < len(t.get("attachments", [])):
                         removed = t["attachments"].pop(idx)
-                        append_activity(t, make_activity(t, "attachment_removed", label=removed))
+                        append_activity_tracked(t, make_activity(t, "attachment_removed", label=removed), session_activities)
                     now = iso_now()
                     t["updated_at"] = today_local()
                     t["updated_ts"] = now
@@ -981,6 +1100,7 @@ class Handler(BaseHTTPRequestHandler):
             if not found:
                 return self._send_json({"error": "not found"}, status=404)
             save_tasks(data)
+            found = apply_plane_auto_sync(found, session_activities)
             return self._send_json(found)
 
         m = re.match(r"^/api/tasks/([^/]+)$", self.path)
@@ -990,19 +1110,21 @@ class Handler(BaseHTTPRequestHandler):
             found = None
             now = iso_now()
             today = today_local()
+            session_activities = []
             for t in data["tasks"]:
                 if t["id"] == task_id:
                     found = t
                     normalize_task(t)
                     if not t.get("archived_at"):
                         t["archived_at"] = today
-                        append_activity(t, make_activity(t, "archived", at=now))
+                        append_activity_tracked(t, make_activity(t, "archived", at=now), session_activities)
                     t["updated_at"] = today
                     t["updated_ts"] = now
                     break
             if not found:
                 return self._send_json({"error": "not found"}, status=404)
             save_tasks(data)
+            found = apply_plane_auto_sync(found, session_activities)
             return self._send_json(found)
         self.send_response(404)
         self.end_headers()

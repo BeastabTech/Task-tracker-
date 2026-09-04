@@ -1200,6 +1200,7 @@ function renderCardEditing(card, t, statusHtml){
     });
     if (res.ok) {
       const updated = await res.json();
+      noticePlaneSyncResult(updated);
       const idx = tasks.findIndex(x => x.id === t.id);
       if (idx >= 0) tasks[idx] = updated;
     }
@@ -1212,6 +1213,7 @@ function renderCardEditing(card, t, statusHtml){
       const res = await fetch(`${API}/${t.id}/attachments/${i}`, { method: "DELETE" });
       if (res.ok) {
         const updated = await res.json();
+        noticePlaneSyncResult(updated);
         const idx = tasks.findIndex(x => x.id === t.id);
         if (idx >= 0) tasks[idx] = updated;
       }
@@ -1318,6 +1320,7 @@ function wireStatusAndDelete(card, t){
       const res = await fetch(`${API}/${t.id}`, { method: "DELETE" });
       if (!res.ok) return showToast("Archive failed");
       const archived = await res.json();
+      noticePlaneSyncResult(archived);
       const idx = tasks.findIndex(x => x.id === t.id);
       if (idx >= 0) tasks[idx] = archived;
       editingIds.delete(t.id);
@@ -1333,6 +1336,16 @@ function escapeHtml(s){
   return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
 
+// If a task is already linked to Plane, the backend auto-syncs this edit there on its own
+// (see sync_plane_on_activity in server.py) — nothing to trigger here. We only need to surface
+// it when that auto-sync failed (e.g. expired cookie), as a quiet heads-up; success stays silent
+// so routine edits don't get noisy.
+function noticePlaneSyncResult(updated){
+  if (updated && updated._plane_sync_error) {
+    showToast(`Plane sync failed: ${updated._plane_sync_error}`);
+  }
+}
+
 async function patch(id, body){
   const res = await fetch(`${API}/${id}`, {
     method: "PATCH",
@@ -1344,6 +1357,7 @@ async function patch(id, body){
     return null;
   }
   const updated = await res.json();
+  noticePlaneSyncResult(updated);
   const idx = tasks.findIndex(t => t.id === id);
   if (idx >= 0) tasks[idx] = updated;
   return updated;
@@ -1397,11 +1411,25 @@ async function copyText(text){
   if (!ok) throw new Error("copy failed");
 }
 
+// Queued rather than clobbering: a Plane-sync warning can now land right alongside a normal
+// action toast (e.g. "Moved to In Progress"), and both need to actually be seen.
+let toastQueue = [];
+let toastShowing = false;
 function showToast(msg){
+  toastQueue.push(msg);
+  if (!toastShowing) drainToastQueue();
+}
+function drainToastQueue(){
+  const msg = toastQueue.shift();
+  if (msg === undefined) { toastShowing = false; return; }
+  toastShowing = true;
   const el = document.getElementById("toast");
   el.textContent = msg;
   el.classList.add("show");
-  setTimeout(() => el.classList.remove("show"), 1800);
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(drainToastQueue, 150);
+  }, 1800);
 }
 
 function askText({ title, placeholder = "", initial = "", confirmText = "Save" }){
