@@ -150,6 +150,8 @@ input[type=text], input[type=number], select{
 input[type=text]{flex:1;min-width:160px;}
 input[type=number]{width:62px;}
 .date-label{display:flex;align-items:center;gap:.35rem;font-size:.78rem;color:var(--text-muted);}
+.checkbox-label{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--text);cursor:pointer;}
+.checkbox-label input{cursor:pointer;}
 .date-label input[type=date]{font-family:inherit;font-size:.8rem;padding:.4rem .5rem;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);}
 .date-label input[type=number]{font-size:.8rem;padding:.4rem .45rem;}
 .chip{cursor:pointer;font-size:.78rem;padding:.35rem .75rem;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);user-select:none;}
@@ -369,12 +371,18 @@ input[type=number]{width:62px;}
   color:var(--ok);text-decoration:none;
 }
 .plane-link:hover{background:var(--ok);color:#fff;}
+.plane-cycle-tag{
+  display:inline-flex;align-items:center;gap:.25rem;font-size:.72rem;font-weight:600;
+  padding:.3rem .6rem;border-radius:6px;border-color:transparent;
+  background:var(--accent-soft);color:var(--accent-strong);text-decoration:none;
+}
+a.plane-cycle-tag:hover{background:var(--accent-strong);color:#fff;}
 .attach-chip{display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;background:var(--accent-soft);color:var(--accent-strong);border-radius:6px;padding:.15rem .5rem;max-width:220px;}
 .attach-chip a{color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .attach-chip .x{cursor:pointer;opacity:.6;}
 .attach-chip .x:hover{opacity:1;}
-.add-attach{cursor:pointer;font-size:.7rem;color:var(--text-muted);border:1px dashed var(--border);border-radius:6px;padding:.15rem .5rem;background:none;}
-.add-attach:hover{color:var(--accent-strong);border-color:var(--accent-strong);}
+.add-attach,.add-comment{cursor:pointer;font-size:.7rem;color:var(--text-muted);border:1px dashed var(--border);border-radius:6px;padding:.15rem .5rem;background:none;}
+.add-attach:hover,.add-comment:hover{color:var(--accent-strong);border-color:var(--accent-strong);}
 
 select.status-select{font-size:.72rem;font-weight:700;padding:.3rem .5rem;border-radius:99px;border:1px solid transparent;flex-shrink:0;}
 select.priority-select{max-width:86px;font-size:.78rem;font-weight:700;}

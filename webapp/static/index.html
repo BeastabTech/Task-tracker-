@@ -112,6 +112,7 @@
     <span class="chip" data-filter="archived">Archived</span>
     <select id="projectFilter"><option value="">All projects</option></select>
     <select id="tagFilter"><option value="">All tags</option></select>
+    <select id="cycleFilter"><option value="">All cycles</option></select>
     <label class="date-label">From <input type="date" id="dateFrom"></label>
     <label class="date-label">To <input type="date" id="dateTo"></label>
     <label class="date-label">Backlog <input type="number" id="backlogLimit" min="0" max="20" step="1"></label>
@@ -155,6 +156,9 @@
       <div class="row">
         <input type="text" id="newNotes" placeholder="Notes (optional)">
         <input type="text" id="newCancelReason" placeholder="Cancel reason (optional)">
+      </div>
+      <div class="row">
+        <label class="checkbox-label"><input type="checkbox" id="newSendToPlane"> 📤 Also send to Plane right away</label>
       </div>
     </div>
   </form>

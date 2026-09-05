@@ -43,6 +43,7 @@ ACTIVITY_ORDER = {
     "restored": 9,
     "cancelled": 10,
     "cancel_reason_changed": 11,
+    "comment": 12,
 }
 
 
@@ -188,6 +189,9 @@ def normalize_task(task):
     task["archived_at"] = task.get("archived_at") or None
     task["plane_issue_id"] = task.get("plane_issue_id") or None
     task["plane_url"] = task.get("plane_url") or None
+    task["plane_cycle_id"] = task.get("plane_cycle_id") or None
+    task["plane_cycle_name"] = task.get("plane_cycle_name") or None
+    task["plane_cycle_url"] = task.get("plane_cycle_url") or None
     if not isinstance(task.get("activity_history"), list):
         task["activity_history"] = []
     if not task["activity_history"]:
@@ -493,18 +497,19 @@ def plane_meta_comment_html(task):
     return "".join(rows)
 
 
-def get_active_plane_cycle_id(cfg):
-    """Returns this project's currently-active Plane cycle id (Plane computes a "CURRENT" status
-    per cycle from its own start/end dates — there's at most one), or None if there isn't one
-    right now. Best-effort: any failure here just means no cycle gets set, it never blocks
-    creating the issue itself."""
+def get_active_plane_cycle(cfg):
+    """Returns {"id": ..., "name": ...} for this project's currently-active Plane cycle (Plane
+    computes a "CURRENT" status per cycle from its own start/end dates — there's at most one), or
+    None if there isn't one right now. Best-effort: any failure here just means no cycle gets
+    set, it never blocks creating the issue itself."""
     workspace = cfg.get("workspace")
     project_id = cfg.get("project_id")
     try:
         status, data, raw = _plane_request(cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/cycles/")
         if status != 200 or not isinstance(data, list):
             return None
-        return next((c.get("id") for c in data if c.get("status") == "CURRENT"), None)
+        cycle = next((c for c in data if c.get("status") == "CURRENT"), None)
+        return {"id": cycle["id"], "name": cycle.get("name")} if cycle else None
     except Exception:
         return None
 
@@ -524,7 +529,8 @@ def create_plane_issue(task):
     # by hand in Plane); re-pushing via Update in Plane must never yank it into "this week's"
     # cycle. If no cycle is currently active, this is just None and the issue is created without
     # one, exactly like before.
-    active_cycle_id = get_active_plane_cycle_id(cfg)
+    active_cycle = get_active_plane_cycle(cfg)
+    active_cycle_id = active_cycle["id"] if active_cycle else None
 
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
@@ -573,7 +579,13 @@ def create_plane_issue(task):
     _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/comments/", {"comment_html": comment_html})
 
     plane_url = f"{PLANE_HOST}/{workspace}/projects/{project_id}/issues/{issue_id}/"
-    return {"plane_issue_id": issue_id, "plane_url": plane_url}
+    return {
+        "plane_issue_id": issue_id,
+        "plane_url": plane_url,
+        "plane_cycle_id": active_cycle_id,
+        "plane_cycle_name": active_cycle["name"] if active_cycle else None,
+        "plane_cycle_url": f"{PLANE_HOST}/{workspace}/projects/{project_id}/cycles/{active_cycle_id}/" if active_cycle_id else None,
+    }
 
 
 def _push_plane_core_fields(cfg, task, issue_id):
@@ -672,6 +684,8 @@ def plane_activity_diff_comment_html(activities):
             rows.append(f'Attachment added: {escape_html_py(a.get("label") or "")}')
         elif kind == "attachment_removed":
             rows.append(f'Attachment removed: {escape_html_py(a.get("label") or "")}')
+        elif kind == "comment":
+            rows.append(f'Comment: {escape_html_py(a.get("text") or "")}')
     if not rows:
         return ""
     items = "".join(f'<p class="editor-paragraph-block">• {row}</p>' for row in rows)
@@ -930,6 +944,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(result, status=502)
             found["plane_issue_id"] = result["plane_issue_id"]
             found["plane_url"] = result["plane_url"]
+            found["plane_cycle_id"] = result.get("plane_cycle_id")
+            found["plane_cycle_name"] = result.get("plane_cycle_name")
+            found["plane_cycle_url"] = result.get("plane_cycle_url")
             found["updated_at"] = today_local()
             found["updated_ts"] = iso_now()
             normalize_task(found)
@@ -951,6 +968,32 @@ class Handler(BaseHTTPRequestHandler):
             if "error" in result:
                 return self._send_json(result, status=502)
             return self._send_json(result)
+
+        m = re.match(r"^/api/tasks/([^/]+)/comments$", self.path)
+        if m:
+            task_id = m.group(1)
+            data = load_tasks()
+            body = self._read_body()
+            text = (body.get("text") or "").strip()
+            if not text:
+                return self._send_json({"error": "Comment text is required"}, status=400)
+            found = None
+            session_activities = []
+            for t in data["tasks"]:
+                if t["id"] == task_id:
+                    found = t
+                    normalize_task(t)
+                    now = iso_now()
+                    append_activity_tracked(t, make_activity(t, "comment", at=now, text=text), session_activities)
+                    t["updated_at"] = today_local()
+                    t["updated_ts"] = now
+                    normalize_task(t)
+                    break
+            if not found:
+                return self._send_json({"error": "not found"}, status=404)
+            save_tasks(data)
+            found = apply_plane_auto_sync(found, session_activities)
+            return self._send_json(found)
 
         if self.path == "/api/tasks":
             data = load_tasks()

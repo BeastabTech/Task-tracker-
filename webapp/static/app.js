@@ -34,6 +34,7 @@ let taskTypes = ["Task", "Review"];
 let activeFilter = "all";
 let activeProject = "";
 let activeTag = "";
+let activeCycle = "";
 let dateFrom = "";
 let dateTo = "";
 let searchTerm = "";
@@ -111,6 +112,7 @@ function activityLabel(activity){
   if (activity.type === "restored") return "Restored";
   if (activity.type === "cancelled") return activity.reason ? `Cancelled: ${activity.reason}` : "Cancelled";
   if (activity.type === "cancel_reason_changed") return to ? `Cancel reason: ${to}` : "Cancel reason cleared";
+  if (activity.type === "comment") return `💬 ${activity.text || ""}`;
   return activity.type.replaceAll("_", " ");
 }
 function recentActivities(limit = 8){
@@ -192,6 +194,7 @@ function visibleTaskFilter(t, todayActivityIds){
   if (activeFilter === "review" && (t.type || "Task") !== "Review") return false;
   if (activeProject && !(t.project || []).includes(activeProject)) return false;
   if (activeTag && !(t.tags || []).includes(activeTag)) return false;
+  if (activeCycle && t.plane_cycle_name !== activeCycle) return false;
   if (dateFrom && (t.updated_at || "") < dateFrom) return false;
   if (dateTo && (t.updated_at || "") > dateTo) return false;
   if (searchTerm) {
@@ -248,6 +251,7 @@ async function loadAll(){
   taskTypes = meta.types || taskTypes;
   populateProjectFilter();
   populateTagFilter();
+  populateCycleFilter();
   populateStatusSelect();
   populatePrioritySelects();
   populateTypeSelect();
@@ -287,6 +291,16 @@ function populateTagFilter(){
   sel.value = current;
 }
 
+function populateCycleFilter(){
+  const sel = document.getElementById("cycleFilter");
+  const cycles = new Set();
+  tasks.forEach(t => { if (t.plane_cycle_name) cycles.add(t.plane_cycle_name); });
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All cycles</option>' +
+    [...cycles].sort().map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  sel.value = current;
+}
+
 function populateStatusSelect(){
   document.getElementById("newStatus").innerHTML =
     statuses.map(s => `<option value="${s}">${s}</option>`).join("");
@@ -316,9 +330,16 @@ function typeOptionsHtml(current){
 
 function sortedTasksDesc(list){
   return [...list].sort((a,b) => {
-    const pa = PRIORITY_ORDER[a.priority || "P3"] ?? 2;
-    const pb = PRIORITY_ORDER[b.priority || "P3"] ?? 2;
-    if (pa !== pb && a.status !== "Done" && b.status !== "Done") return pa - pb;
+    // Open work always ranks above Done/Cancelled, no matter how recently either was touched —
+    // otherwise a task marked Done just now (updated_ts = right now) would outrank active work.
+    const aClosed = a.status === "Done" || a.status === "Cancelled";
+    const bClosed = b.status === "Done" || b.status === "Cancelled";
+    if (aClosed !== bClosed) return aClosed ? 1 : -1;
+    if (!aClosed) {
+      const pa = PRIORITY_ORDER[a.priority || "P3"] ?? 2;
+      const pb = PRIORITY_ORDER[b.priority || "P3"] ?? 2;
+      if (pa !== pb) return pa - pb;
+    }
     const ma = MONTH_ORDER.indexOf(a.month), mb = MONTH_ORDER.indexOf(b.month);
     if (ma !== mb) return mb - ma;
     const ta = a.updated_ts || a.created_at || a.updated_at || "";
@@ -1018,14 +1039,17 @@ function renderCard(t){
 
 function renderCardReadOnly(card, t, statusHtml){
   const attachments = t.attachments || [];
-  const attachHtml = attachments.length
-    ? `<div class="attach-row">${attachments.map(a => {
-        const isUrl = /^https?:\/\//.test(a);
-        return isUrl
-          ? `<span class="attach-chip static"><a href="${escapeHtml(a)}" target="_blank" rel="noopener">${escapeHtml(a)}</a></span>`
-          : `<span class="attach-chip static">${escapeHtml(a)}</span>`;
-      }).join("")}</div>`
-    : "";
+  const attachChipsHtml = attachments.map(a => {
+    const isUrl = /^https?:\/\//.test(a);
+    return isUrl
+      ? `<span class="attach-chip static"><a href="${escapeHtml(a)}" target="_blank" rel="noopener">${escapeHtml(a)}</a></span>`
+      : `<span class="attach-chip static">${escapeHtml(a)}</span>`;
+  }).join("");
+  const attachHtml = `<div class="attach-row">
+    ${attachChipsHtml}
+    <button type="button" class="add-attach">📎 add attachment</button>
+    <button type="button" class="add-comment">💬 add comment</button>
+  </div>`;
 
   card.innerHTML = `
     ${statusHtml}
@@ -1060,6 +1084,8 @@ function renderCardReadOnly(card, t, statusHtml){
   wireStatusAndDelete(card, t);
   wireHistoryToggle(card, t);
   wirePlaneButton(card, t);
+  wireAddComment(card, t);
+  wireAddAttachment(card, t);
   card.querySelector(".edit-btn").addEventListener("click", () => {
     editingIds.add(t.id);
     render();
@@ -1115,6 +1141,7 @@ function renderCardEditing(card, t, statusHtml){
       <div class="attach-row">
         ${attachHtml}
         <button type="button" class="add-attach">📎 add attachment</button>
+        <button type="button" class="add-comment">💬 add comment</button>
       </div>
       ${planeRowHtml(t)}
       ${activityTimelineHtml(t)}
@@ -1183,7 +1210,29 @@ function renderCardEditing(card, t, statusHtml){
     if (v !== (t.notes||"")){ t.notes = v; t.updated_at = todayStr(); await patch(t.id, { notes: v }); }
   });
 
-  card.querySelector(".add-attach").addEventListener("click", async () => {
+  wireAddAttachment(card, t);
+
+  wireAddComment(card, t);
+
+  card.querySelectorAll(".attach-chip .x").forEach(x => {
+    x.addEventListener("click", async () => {
+      const i = parseInt(x.dataset.i, 10);
+      const res = await fetch(`${API}/${t.id}/attachments/${i}`, { method: "DELETE" });
+      if (res.ok) {
+        const updated = await res.json();
+        noticePlaneSyncResult(updated);
+        const idx = tasks.findIndex(x => x.id === t.id);
+        if (idx >= 0) tasks[idx] = updated;
+      }
+      render();
+    });
+  });
+}
+
+function wireAddAttachment(card, t){
+  const btn = card.querySelector(".add-attach");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
     const val = await askText({
       title: "Add attachment",
       placeholder: "Paste a link or file path",
@@ -1206,19 +1255,33 @@ function renderCardEditing(card, t, statusHtml){
     }
     render();
   });
+}
 
-  card.querySelectorAll(".attach-chip .x").forEach(x => {
-    x.addEventListener("click", async () => {
-      const i = parseInt(x.dataset.i, 10);
-      const res = await fetch(`${API}/${t.id}/attachments/${i}`, { method: "DELETE" });
-      if (res.ok) {
-        const updated = await res.json();
-        noticePlaneSyncResult(updated);
-        const idx = tasks.findIndex(x => x.id === t.id);
-        if (idx >= 0) tasks[idx] = updated;
-      }
-      render();
+function wireAddComment(card, t){
+  const btn = card.querySelector(".add-comment");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const text = await askTextarea({
+      title: "Add comment",
+      placeholder: "What's the update?",
+      confirmText: "Add comment",
     });
+    if (!text) return;
+    const res = await fetch(`${API}/${t.id}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      noticePlaneSyncResult(updated);
+      const idx = tasks.findIndex(x => x.id === t.id);
+      if (idx >= 0) tasks[idx] = updated;
+      showToast("Comment added");
+    } else {
+      showToast("Failed to add comment");
+    }
+    render();
   });
 }
 
@@ -1235,12 +1298,42 @@ function wireHistoryToggle(card, t){
 
 function planeRowHtml(t){
   if (t.plane_url) {
+    const cycleHtml = t.plane_cycle_name
+      ? (t.plane_cycle_url
+          ? `<a href="${escapeHtml(t.plane_cycle_url)}" target="_blank" rel="noopener" class="plane-cycle-tag" title="Open this cycle in Plane">🔁 ${escapeHtml(t.plane_cycle_name)}</a>`
+          : `<span class="plane-cycle-tag" title="Plane cycle this was in when first sent">🔁 ${escapeHtml(t.plane_cycle_name)}</span>`)
+      : "";
     return `<div class="plane-row">
       <a href="${escapeHtml(t.plane_url)}" target="_blank" rel="noopener" class="plane-link">↗ View in Plane</a>
+      ${cycleHtml}
       <button type="button" class="plane-btn plane-update-btn" title="Push this task's current status/priority/dates/notes to Plane">🔄 Update in Plane</button>
     </div>`;
   }
   return `<div class="plane-row"><button type="button" class="plane-btn">📤 Send to Plane</button></div>`;
+}
+
+// Shared by the per-card "Send to Plane" button and the Add Task form's "also send to Plane"
+// checkbox — handles the creds-expired-retry dance once, and copies every plane_* field
+// (including the cycle it landed in) onto the in-memory task so the UI reflects it without a
+// full reload. Returns the response data on success, null on failure (a toast is already shown
+// for the creds-fix path; callers still decide their own success/failure toast).
+async function sendTaskToPlane(taskId){
+  let res = await fetch(`${API}/${taskId}/plane`, { method: "POST" });
+  let data = await res.json();
+  if ((!res.ok || data.error) && await offerPlaneCredsFix(data.error)) {
+    res = await fetch(`${API}/${taskId}/plane`, { method: "POST" });
+    data = await res.json();
+  }
+  if (!res.ok || data.error) return null;
+  const t = tasks.find(x => x.id === taskId);
+  if (t) {
+    t.plane_issue_id = data.plane_issue_id;
+    t.plane_url = data.plane_url;
+    t.plane_cycle_id = data.plane_cycle_id;
+    t.plane_cycle_name = data.plane_cycle_name;
+    t.plane_cycle_url = data.plane_cycle_url;
+  }
+  return data;
 }
 
 function wirePlaneButton(card, t){
@@ -1250,21 +1343,14 @@ function wirePlaneButton(card, t){
       btn.disabled = true;
       btn.textContent = "Sending…";
       try {
-        let res = await fetch(`${API}/${t.id}/plane`, { method: "POST" });
-        let data = await res.json();
-        if ((!res.ok || data.error) && await offerPlaneCredsFix(data.error)) {
-          // cookie fixed inline — retry once
-          res = await fetch(`${API}/${t.id}/plane`, { method: "POST" });
-          data = await res.json();
-        }
-        if (!res.ok || data.error) {
+        const data = await sendTaskToPlane(t.id);
+        if (!data) {
           btn.disabled = false;
           btn.textContent = "📤 Send to Plane";
           return;
         }
-        t.plane_issue_id = data.plane_issue_id;
-        t.plane_url = data.plane_url;
         showToast("Sent to Plane ✓");
+        populateCycleFilter();
         render();
       } catch (err) {
         showToast("Failed to send to Plane");
@@ -1367,7 +1453,7 @@ async function moveTaskStatus(t, newStatus){
   if (!newStatus || newStatus === t.status) return t;
   const body = { status: newStatus };
   if (newStatus === "Cancelled") {
-    const reason = await askText({
+    const reason = await askTextarea({
       title: "Cancel task",
       placeholder: "Reason (optional)",
       initial: t.cancel_reason || "",
@@ -1377,7 +1463,7 @@ async function moveTaskStatus(t, newStatus){
     body.cancel_reason = reason;
     body.status_note = reason;
   } else {
-    const note = await askText({
+    const note = await askTextarea({
       title: `Update for moving to ${newStatus}`,
       placeholder: "What's the update? (optional)",
       confirmText: `Move to ${newStatus}`,
@@ -1500,7 +1586,7 @@ function askConfirm({ title, message = "", confirmText = "Delete", danger = true
   });
 }
 
-function askTextarea({ title, placeholder = "", helpText = "", confirmText = "Save" }){
+function askTextarea({ title, placeholder = "", helpText = "", confirmText = "Save", initial = "" }){
   return new Promise(resolve => {
     const overlay = document.createElement("div");
     overlay.className = "modal-backdrop";
@@ -1508,7 +1594,7 @@ function askTextarea({ title, placeholder = "", helpText = "", confirmText = "Sa
       <form class="text-modal">
         <h2>${escapeHtml(title)}</h2>
         ${helpText ? `<p class="confirm-message">${escapeHtml(helpText)}</p>` : ""}
-        <textarea class="modal-textarea" placeholder="${escapeHtml(placeholder)}" rows="6"></textarea>
+        <textarea class="modal-textarea" placeholder="${escapeHtml(placeholder)}" rows="6">${escapeHtml(initial)}</textarea>
         <div class="modal-actions">
           <button type="button" class="btn ghost modal-cancel">Cancel</button>
           <button type="submit" class="btn">${escapeHtml(confirmText)}</button>
@@ -1529,7 +1615,9 @@ function askTextarea({ title, placeholder = "", helpText = "", confirmText = "Sa
     });
     document.addEventListener("keydown", onKey);
     document.body.appendChild(overlay);
-    overlay.querySelector(".modal-textarea").focus();
+    const ta = overlay.querySelector(".modal-textarea");
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
   });
 }
 
@@ -1673,12 +1761,14 @@ function resetFilters(){
   activeFilter = "all";
   activeProject = "";
   activeTag = "";
+  activeCycle = "";
   dateFrom = "";
   dateTo = "";
   searchTerm = "";
   document.getElementById("search").value = "";
   document.getElementById("projectFilter").value = "";
   document.getElementById("tagFilter").value = "";
+  document.getElementById("cycleFilter").value = "";
   document.getElementById("dateFrom").value = "";
   document.getElementById("dateTo").value = "";
   document.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c.dataset.filter === "all"));
@@ -1691,6 +1781,11 @@ document.getElementById("projectFilter").addEventListener("change", e => {
 
 document.getElementById("tagFilter").addEventListener("change", e => {
   activeTag = e.target.value;
+  render();
+});
+
+document.getElementById("cycleFilter").addEventListener("change", e => {
+  activeCycle = e.target.value;
   render();
 });
 
@@ -1778,6 +1873,7 @@ document.getElementById("addForm").addEventListener("submit", async e => {
   });
   const created = await res.json();
   tasks.push(created);
+  const alsoSendToPlane = document.getElementById("newSendToPlane").checked;
   document.getElementById("addForm").reset();
   document.getElementById("moreOptions").classList.remove("open");
   newProjectVals = []; newTagVals = []; newWhoVals = []; newAttachVals = [];
@@ -1785,9 +1881,21 @@ document.getElementById("addForm").addEventListener("submit", async e => {
   document.getElementById("quickPreview").innerHTML = "";
   populateProjectFilter();
   populateTagFilter();
+  populateCycleFilter();
   populateDatalists();
   render();
   showToast("Task added");
+
+  if (alsoSendToPlane) {
+    const data = await sendTaskToPlane(created.id);
+    if (data) {
+      populateCycleFilter();
+      render();
+      showToast("Sent to Plane ✓");
+    } else {
+      showToast("Task added, but sending to Plane failed");
+    }
+  }
 });
 
 function clipText(text, max = 220){
