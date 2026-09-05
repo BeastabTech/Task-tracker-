@@ -493,6 +493,22 @@ def plane_meta_comment_html(task):
     return "".join(rows)
 
 
+def get_active_plane_cycle_id(cfg):
+    """Returns this project's currently-active Plane cycle id (Plane computes a "CURRENT" status
+    per cycle from its own start/end dates — there's at most one), or None if there isn't one
+    right now. Best-effort: any failure here just means no cycle gets set, it never blocks
+    creating the issue itself."""
+    workspace = cfg.get("workspace")
+    project_id = cfg.get("project_id")
+    try:
+        status, data, raw = _plane_request(cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/cycles/")
+        if status != 200 or not isinstance(data, list):
+            return None
+        return next((c.get("id") for c in data if c.get("status") == "CURRENT"), None)
+    except Exception:
+        return None
+
+
 def create_plane_issue(task):
     cfg = load_plane_config()
     cookie = cfg.get("cookie")
@@ -503,6 +519,12 @@ def create_plane_issue(task):
     assignee_id = cfg.get("assignee_id")
     if not assignee_id:
         return {"error": "Plane connected but your user id wasn't detected yet — reopen Plane settings and save again."}
+
+    # Only on first push — a task already linked keeps whatever cycle it's in (or was moved to
+    # by hand in Plane); re-pushing via Update in Plane must never yank it into "this week's"
+    # cycle. If no cycle is currently active, this is just None and the issue is created without
+    # one, exactly like before.
+    active_cycle_id = get_active_plane_cycle_id(cfg)
 
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
@@ -531,6 +553,19 @@ def create_plane_issue(task):
     issue_id = data.get("id")
     if not issue_id:
         return {"error": f"Plane didn't return an issue id: {json.dumps(data)[:300]}"}
+
+    # cycle_id in the create payload above is silently ignored by Plane (verified live) — an
+    # issue only actually joins a cycle through this separate cycle-issues call. Best-effort:
+    # a failure here must not fail the whole "Send to Plane" action.
+    if active_cycle_id:
+        try:
+            _plane_request(
+                cfg, "POST",
+                f"/api/workspaces/{workspace}/projects/{project_id}/cycles/{active_cycle_id}/cycle-issues/",
+                {"issues": [issue_id]},
+            )
+        except Exception:
+            pass
 
     # Bookkeeping (status/priority/type/project/tags/stakeholders/dates) goes into a comment,
     # not the description — keeps the description as just the real notes, per user preference.
