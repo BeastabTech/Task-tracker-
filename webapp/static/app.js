@@ -41,6 +41,8 @@ let searchTerm = "";
 let attentionOpen = true;
 let backlogLimit = parseInt(localStorage.getItem("dailyBacklogLimit") || "5", 10);
 let historyOpenIds = new Set();
+let collapsedMonths = new Set();
+let collapsedWeeks = new Set();
 let highlightedTaskId = "";
 let viewMode = localStorage.getItem("taskViewMode") || "list";
 let updateMode = localStorage.getItem("dailyUpdateMode") || "short";
@@ -72,6 +74,30 @@ function fmtRange(from, to){
   if (!from) return "";
   if (!to || to === from) return fmtDate(from);
   return `${fmtDate(from)} – ${fmtDate(to)}`;
+}
+// Buckets a date into its (Monday-start) week — used to add weekly sub-sections inside each
+// month group in the list view. `key` sorts chronologically (the week's Monday, as an ISO
+// string); `label` is what's shown in the sub-header.
+function weekKeyAndLabel(dateIso){
+  if (!dateIso) return { key: "0000-00-00", label: "No date" };
+  const [y,m,d] = dateIso.split("-").map(Number);
+  const date = new Date(y, m-1, d);
+  const day = date.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  date.setDate(date.getDate() + diff);
+  const end = new Date(date);
+  end.setDate(date.getDate() + 6);
+  const key = localDateStr(date);
+  const label = `${date.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – ${end.toLocaleDateString(undefined,{month:"short",day:"numeric"})}`;
+  return { key, label };
+}
+// Jumping to a task (from a summary row, activity feed, etc.) must actually reveal it — if its
+// month/week section is currently folded, the card isn't even in the DOM to scroll to.
+function ensureTaskSectionExpanded(t){
+  if (!t.month) return;
+  collapsedMonths.delete(t.month);
+  const { key } = weekKeyAndLabel(t.discussed_from);
+  collapsedWeeks.delete(`${t.month}::${key}`);
 }
 function ageDays(t){
   const start = t.created_at || t.discussed_from || t.updated_at;
@@ -430,6 +456,56 @@ function dailyEntries(day){
   });
 }
 
+// Rich hover preview for the compact summary rows (Daily Review, Backlog Focus, Cleanup,
+// Timeline, Needs attention) — their titles are ellipsis-truncated to fit, so hovering surfaces
+// the same detail you'd see by clicking through: full title, status/priority, project/tags,
+// stakeholders, due date, and a notes excerpt.
+let hoverTooltipEl = null;
+function ensureHoverTooltip(){
+  if (hoverTooltipEl) return hoverTooltipEl;
+  hoverTooltipEl = document.createElement("div");
+  hoverTooltipEl.className = "hover-tooltip";
+  document.body.appendChild(hoverTooltipEl);
+  return hoverTooltipEl;
+}
+function taskTooltipHtml(t, extraLineHtml){
+  const bits = [];
+  bits.push(`<div class="tt-title">${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</div>`);
+  bits.push(`<div class="tt-meta"><span class="row-status status-${slug(t.status)}">${escapeHtml(t.status)}</span><span class="tag priority priority-${t.priority||"P3"}">${escapeHtml(t.priority||"P3")}</span></div>`);
+  if (extraLineHtml) bits.push(`<div class="tt-line tt-extra">${extraLineHtml}</div>`);
+  if ((t.project||[]).length) bits.push(`<div class="tt-line"><strong>Project:</strong> ${escapeHtml(t.project.join(", "))}</div>`);
+  if ((t.tags||[]).length) bits.push(`<div class="tt-line"><strong>Tags:</strong> ${escapeHtml(t.tags.join(", "))}</div>`);
+  if ((t.discussed_with||[]).length) bits.push(`<div class="tt-line"><strong>With:</strong> ${escapeHtml(t.discussed_with.join(", "))}</div>`);
+  if (t.due_date) bits.push(`<div class="tt-line"><strong>Due:</strong> ${escapeHtml(fmtDate(t.due_date))}</div>`);
+  if (t.status === "Cancelled" && t.cancel_reason) bits.push(`<div class="tt-line"><strong>Reason:</strong> ${escapeHtml(t.cancel_reason)}</div>`);
+  if (t.notes) bits.push(`<div class="tt-notes">${escapeHtml(clipText(t.notes, 260))}</div>`);
+  return bits.join("");
+}
+function positionHoverTooltip(anchor){
+  const el = hoverTooltipEl;
+  const rect = anchor.getBoundingClientRect();
+  const ttRect = el.getBoundingClientRect();
+  let top = rect.bottom + 8;
+  if (top + ttRect.height > window.innerHeight - 8) top = rect.top - ttRect.height - 8;
+  let left = rect.left;
+  if (left + ttRect.width > window.innerWidth - 8) left = window.innerWidth - ttRect.width - 8;
+  if (left < 8) left = 8;
+  el.style.top = `${Math.max(8, top)}px`;
+  el.style.left = `${left}px`;
+}
+function hideHoverTooltip(){
+  if (hoverTooltipEl) hoverTooltipEl.classList.remove("show");
+}
+function attachHoverPreview(row, htmlFn){
+  row.addEventListener("mouseenter", () => {
+    const el = ensureHoverTooltip();
+    el.innerHTML = htmlFn();
+    el.classList.add("show");
+    positionHoverTooltip(row);
+  });
+  row.addEventListener("mouseleave", hideHoverTooltip);
+}
+
 function compactTaskRow(t, label){
   const row = document.createElement("button");
   row.type = "button";
@@ -446,6 +522,7 @@ function compactTaskRow(t, label){
   `;
   row.addEventListener("click", () => {
     resetFilters();
+    ensureTaskSectionExpanded(t);
     highlightedTaskId = t.id;
     render();
     const target = document.querySelector(`#board [data-id="${t.id}"]`);
@@ -464,6 +541,7 @@ function compactTaskRow(t, label){
       window.open(t.plane_url, "_blank", "noopener");
     });
   }
+  attachHoverPreview(row, () => taskTooltipHtml(t, label && label !== t.status ? `<strong>Then:</strong> ${escapeHtml(label)}` : ""));
   return row;
 }
 
@@ -482,6 +560,7 @@ function compactActivityRow(item){
   `;
   row.addEventListener("click", () => {
     resetFilters();
+    ensureTaskSectionExpanded(item.task);
     highlightedTaskId = item.task.id;
     viewMode = "list";
     localStorage.setItem("taskViewMode", viewMode);
@@ -495,6 +574,7 @@ function compactActivityRow(item){
       window.open(item.task.plane_url, "_blank", "noopener");
     });
   }
+  attachHoverPreview(row, () => taskTooltipHtml(item.task, `<strong>Activity:</strong> ${escapeHtml(activityLabel(item.activity))} · ${escapeHtml(activityTime(item.activity))}`));
   return row;
 }
 
@@ -557,6 +637,7 @@ function renderAttention(){
 }
 
 function render(){
+  hideHoverTooltip();
   const board = document.getElementById("board");
   board.innerHTML = "";
   const todayActivityIds = new Set(dailyEntries(todayStr()).map(entry => entry.task.id));
@@ -613,11 +694,38 @@ function renderList(visible){
 
   months.forEach(month => {
     const group = visible.filter(t => (t.month || "Other") === month);
+    const monthCollapsed = collapsedMonths.has(month);
     const head = document.createElement("div");
-    head.className = "month-head";
-    head.innerHTML = `<h2>${month}</h2><span class="count">${group.length}</span><div class="line"></div>`;
+    head.className = "month-head foldable";
+    head.innerHTML = `<span class="fold-caret">${monthCollapsed ? "▸" : "▾"}</span><h2>${escapeHtml(month)}</h2><span class="count">${group.length}</span><div class="line"></div>`;
+    head.addEventListener("click", () => {
+      if (monthCollapsed) collapsedMonths.delete(month); else collapsedMonths.add(month);
+      render();
+    });
     board.appendChild(head);
-    group.forEach(t => board.appendChild(renderCard(t)));
+    if (monthCollapsed) return;
+
+    const weeks = new Map();
+    group.forEach(t => {
+      const { key, label } = weekKeyAndLabel(t.discussed_from);
+      if (!weeks.has(key)) weeks.set(key, { label, tasks: [] });
+      weeks.get(key).tasks.push(t);
+    });
+    [...weeks.keys()].sort((a,b) => b.localeCompare(a)).forEach(weekKey => {
+      const { label, tasks: weekTasks } = weeks.get(weekKey);
+      const compositeKey = `${month}::${weekKey}`;
+      const weekCollapsed = collapsedWeeks.has(compositeKey);
+      const weekHead = document.createElement("div");
+      weekHead.className = "week-head foldable";
+      weekHead.innerHTML = `<span class="fold-caret">${weekCollapsed ? "▸" : "▾"}</span><h3>${escapeHtml(label)}</h3><span class="count">${weekTasks.length}</span>`;
+      weekHead.addEventListener("click", () => {
+        if (weekCollapsed) collapsedWeeks.delete(compositeKey); else collapsedWeeks.add(compositeKey);
+        render();
+      });
+      board.appendChild(weekHead);
+      if (weekCollapsed) return;
+      weekTasks.forEach(t => board.appendChild(renderCard(t)));
+    });
   });
 }
 
@@ -2109,6 +2217,14 @@ document.getElementById("previewUpdateBtn").addEventListener("click", () => {
 document.getElementById("closeUpdatePreview").addEventListener("click", () => {
   document.getElementById("updatePreviewWrap").classList.remove("open");
   renderUpdateModeSwitch();
+});
+
+const backToTopBtn = document.getElementById("backToTop");
+window.addEventListener("scroll", () => {
+  backToTopBtn.classList.toggle("show", window.scrollY > 400);
+}, { passive: true });
+backToTopBtn.addEventListener("click", () => {
+  window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
 loadAll();
