@@ -676,7 +676,8 @@ function renderUpdateModeSwitch(){
     btn.classList.toggle("active", btn.dataset.updateMode === updateMode);
   });
   const copyBtn = document.getElementById("copyBtn");
-  if (copyBtn) copyBtn.textContent = updateMode === "detailed" ? "Copy detailed update" : "Copy short update";
+  const copyLabels = { detailed: "Copy detailed update", speak: "Copy talking points", short: "Copy short update" };
+  if (copyBtn) copyBtn.textContent = copyLabels[updateMode] || copyLabels.short;
   const previewBtn = document.getElementById("previewUpdateBtn");
   const previewOpen = document.getElementById("updatePreviewWrap")?.classList.contains("open");
   if (previewBtn) previewBtn.textContent = previewOpen ? "Hide preview" : "Show preview";
@@ -1846,7 +1847,7 @@ document.querySelectorAll("[data-view-mode]").forEach(btn => {
 
 document.querySelectorAll("[data-update-mode]").forEach(btn => {
   btn.addEventListener("click", () => {
-    updateMode = btn.dataset.updateMode === "detailed" ? "detailed" : "short";
+    updateMode = ["detailed", "speak"].includes(btn.dataset.updateMode) ? btn.dataset.updateMode : "short";
     localStorage.setItem("dailyUpdateMode", updateMode);
     renderUpdateModeSwitch();
     if (document.getElementById("updatePreviewWrap").classList.contains("open")) refreshUpdatePreview(true);
@@ -2062,9 +2063,10 @@ function buildUpdateContext(){
   const todayEntries = dailyEntries(today);
   const todayById = new Map(todayEntries.map(entry => [entry.task.id, entry]));
 
-  const yesterdayCarry = tasks
+  const rawYesterdayCarry = tasks
     .filter(t => !t.archived_at && ACTIVE_WORK_STATUSES.has(statusAtEndOfDay(t, yesterday)))
-    .sort((a,b) => (STATUS_ORDER[statusAtEndOfDay(a, yesterday)] ?? 9) - (STATUS_ORDER[statusAtEndOfDay(b, yesterday)] ?? 9))
+    .sort((a,b) => (STATUS_ORDER[statusAtEndOfDay(a, yesterday)] ?? 9) - (STATUS_ORDER[statusAtEndOfDay(b, yesterday)] ?? 9));
+  const yesterdayCarry = rawYesterdayCarry
     .map(t => {
       const yesterdayStatus = statusAtEndOfDay(t, yesterday);
       const todayEntry = todayById.get(t.id);
@@ -2114,6 +2116,7 @@ function buildUpdateContext(){
     rawCancelledToday: todayEntries.filter(entry => entry.status === "Cancelled").map(entry => entry.task),
     rawCompletedToday: todayEntries.filter(entry => entry.status === "Done").map(entry => entry.task),
     rawCompletedYesterday: yesterdayEntries.filter(entry => entry.status === "Done").map(entry => entry.task),
+    rawYesterdayCarry,
   };
 }
 
@@ -2186,9 +2189,61 @@ function buildShortUpdateText(context){
   return lines.join("\n");
 }
 
+// Talking points for actually saying out loud in standup — not a written report. Terse, capped
+// short so it's a glance-and-speak list, and splits out "Blockers" (Pending-status work, plus
+// anything overdue) as its own callout instead of burying it inside "current work", since that's
+// specifically what a standup wants flagged.
+function buildStandupSpeakText(context){
+  const yesterdaySeen = new Set();
+  const yesterdayLines = [];
+  context.rawCompletedYesterday.forEach(t => {
+    if (yesterdaySeen.has(t.id)) return;
+    yesterdaySeen.add(t.id);
+    yesterdayLines.push(`- Finished: ${shortTaskTitle(t, 90)}`);
+  });
+  context.rawYesterdayCarry.forEach(t => {
+    if (yesterdaySeen.has(t.id)) return;
+    yesterdaySeen.add(t.id);
+    yesterdayLines.push(`- Worked on: ${shortTaskTitle(t, 90)}`);
+  });
+
+  const todayLines = context.rawCurrentActive
+    .filter(t => t.status !== "Pending")
+    .map(t => `- ${shortTaskTitle(t, 90)}`);
+
+  const blockerSeen = new Set();
+  const blockerLines = [];
+  context.rawCurrentActive.filter(t => t.status === "Pending").forEach(t => {
+    blockerSeen.add(t.id);
+    blockerLines.push(`- ${shortTaskTitle(t, 90)}${t.due_date ? ` (due ${fmtDate(t.due_date)})` : ""}`);
+  });
+  tasks.filter(t => !t.archived_at && !isClosed(t) && isOverdue(t) && !blockerSeen.has(t.id)).forEach(t => {
+    blockerSeen.add(t.id);
+    blockerLines.push(`- Overdue: ${shortTaskTitle(t, 90)} (was due ${fmtDate(t.due_date)})`);
+  });
+
+  const backlogLines = context.rawBacklog.slice(0, 4).map(t => `- ${shortTaskTitle(t, 90)}`);
+
+  const lines = [`Standup talking points - ${fmtDate(context.today)}`, ""];
+  lines.push("Yesterday:");
+  lines.push(...(yesterdayLines.length ? yesterdayLines.slice(0, 6) : ["- Nothing logged"]));
+  lines.push("");
+  lines.push("Today:");
+  lines.push(...(todayLines.length ? todayLines.slice(0, 6) : ["- Nothing active"]));
+  lines.push("");
+  lines.push("Blockers:");
+  lines.push(...(blockerLines.length ? blockerLines : ["- None"]));
+  lines.push("");
+  lines.push("Backlog to look at:");
+  lines.push(...(backlogLines.length ? backlogLines : ["- None"]));
+  return lines.join("\n");
+}
+
 function buildDailyUpdateText(mode = updateMode){
   const context = buildUpdateContext();
-  return mode === "detailed" ? buildDetailedUpdateText(context) : buildShortUpdateText(context);
+  if (mode === "detailed") return buildDetailedUpdateText(context);
+  if (mode === "speak") return buildStandupSpeakText(context);
+  return buildShortUpdateText(context);
 }
 
 function refreshUpdatePreview(open = false){
