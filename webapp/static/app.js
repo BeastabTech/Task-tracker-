@@ -1831,6 +1831,55 @@ async function offerPlaneCredsFix(errMsg){
 
 document.getElementById("planeSettingsBtn").addEventListener("click", openPlaneCookiePrompt);
 
+// Plane cycles are weekly and end on their own — nothing carries an unfinished issue into the
+// new one automatically on Plane's side, so still-open tasks are left sitting in a stale, ended
+// cycle until someone notices. `silent: true` (the once-a-day background check) never interrupts
+// with the creds-recovery modal and stays quiet unless it actually moved something; the manual
+// button always reports back, errors included.
+async function runCycleRollover({ silent = false } = {}){
+  try {
+    let res = await fetch("/api/plane-cycle-rollover", { method: "POST" });
+    let data = await res.json();
+    if ((!res.ok || data.error) && !silent && await offerPlaneCredsFix(data.error)) {
+      res = await fetch("/api/plane-cycle-rollover", { method: "POST" });
+      data = await res.json();
+    }
+    if (!res.ok || data.error) {
+      if (!silent) showToast(data.error || "Cycle sync failed");
+      return null;
+    }
+    if (data.moved && data.moved.length) {
+      await loadAll();
+      showToast(`Moved ${data.moved.length} task${data.moved.length === 1 ? "" : "s"} into ${data.cycle_name}`);
+    } else if (!silent) {
+      showToast(data.cycle_name ? `Already up to date with ${data.cycle_name}` : "No active Plane cycle right now");
+    }
+    if (data.failed && data.failed.length && !silent) {
+      showToast(`${data.failed.length} task(s) couldn't be moved — check them in Plane`);
+    }
+    return data;
+  } catch (err) {
+    if (!silent) showToast("Cycle sync failed");
+    return null;
+  }
+}
+
+document.getElementById("cycleSyncBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("cycleSyncBtn");
+  btn.disabled = true;
+  await runCycleRollover({ silent: false });
+  btn.disabled = false;
+});
+
+// Runs at most once per day, automatically — enough to catch a weekly cycle transition without
+// hammering Plane on every page load.
+async function maybeAutoSyncCycles(){
+  const today = todayStr();
+  if (localStorage.getItem("lastCycleRolloverCheck") === today) return;
+  localStorage.setItem("lastCycleRolloverCheck", today);
+  await runCycleRollover({ silent: true });
+}
+
 document.querySelectorAll(".chip").forEach(chip => {
   chip.addEventListener("click", () => {
     setActiveFilter(chip.dataset.filter);
@@ -2282,4 +2331,4 @@ backToTopBtn.addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
-loadAll();
+loadAll().then(maybeAutoSyncCycles);

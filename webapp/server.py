@@ -514,6 +514,84 @@ def get_active_plane_cycle(cfg):
         return None
 
 
+PLANE_ACTIVE_WORK_STATUSES = {"In Progress", "In Review", "Pending"}
+
+
+def roll_open_tasks_to_current_cycle():
+    """Plane cycles are weekly — they end and a new one goes CURRENT on their own, but nothing
+    automatically carries an unfinished issue over into the new one (same as Jira/Linear sprints:
+    that's a deliberate human call in most tools, but here it's pure housekeeping worth doing on
+    our own). Keeps every still-open, Plane-linked task's cycle in sync with reality:
+
+    1. Was in a specific (now stale) cycle -> rolled into the current one.
+    2. No cycle recorded locally at all, but is actively-worked (In Progress/In Review/Pending —
+       not just backlog "To Do") -> Plane is checked directly first, since this often just means
+       the task was linked before cycle-tracking existed and Plane already has it cycled
+       correctly (only our local record is stale, no API mutation needed); only added to the
+       current cycle if Plane genuinely has no cycle for it either.
+
+    "To Do" tasks with no cycle are left alone either way — untouched backlog isn't this sweep's
+    job, and forcing every one of those into "this week" the first time this runs would be a much
+    bigger, unrequested bulk action. Closed/archived tasks are never touched — a Done task staying
+    in the cycle it was actually finished in is correct, not a bug."""
+    cfg = load_plane_config()
+    if not cfg.get("cookie") or not cfg.get("workspace") or not cfg.get("project_id"):
+        return {"error": "Plane is not configured yet."}
+    active_cycle = get_active_plane_cycle(cfg)
+    if not active_cycle:
+        return {"ok": True, "cycle_name": None, "moved": [], "failed": []}
+
+    workspace = cfg.get("workspace")
+    project_id = cfg.get("project_id")
+    data = load_tasks()
+    moved, failed = [], []
+    for t in data["tasks"]:
+        if t.get("archived_at") or t.get("status") in ("Done", "Cancelled"):
+            continue
+        issue_id = t.get("plane_issue_id")
+        if not issue_id:
+            continue
+        local_cycle_id = t.get("plane_cycle_id")
+        if local_cycle_id == active_cycle["id"]:
+            continue
+        if local_cycle_id is None and t.get("status") not in PLANE_ACTIVE_WORK_STATUSES:
+            continue  # untouched backlog with no cycle — not this sweep's job
+
+        def current_plane_cycle():
+            try:
+                s, d, _ = _plane_request(cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/")
+            except Exception:
+                return None
+            return d.get("cycle_id") if s == 200 and d else None
+
+        plane_cycle_now = current_plane_cycle()
+        if plane_cycle_now != active_cycle["id"]:
+            try:
+                _plane_request(
+                    cfg, "POST",
+                    f"/api/workspaces/{workspace}/projects/{project_id}/cycles/{active_cycle['id']}/cycle-issues/",
+                    {"issues": [issue_id]},
+                )
+            except Exception:
+                pass
+            # Plane's cycle-issues endpoint can return 400 "The payload is not valid" even when
+            # it actually performs the move (observed live) — so don't trust that status code,
+            # re-read the issue to find out what really happened.
+            plane_cycle_now = current_plane_cycle()
+
+        if plane_cycle_now == active_cycle["id"]:
+            t["plane_cycle_id"] = active_cycle["id"]
+            t["plane_cycle_name"] = active_cycle["name"]
+            t["plane_cycle_url"] = f"{PLANE_HOST}/{workspace}/projects/{project_id}/cycles/{active_cycle['id']}/"
+            moved.append(t["id"])
+        else:
+            failed.append(t["id"])
+
+    if moved:
+        save_tasks(data)
+    return {"ok": True, "cycle_name": active_cycle["name"], "moved": moved, "failed": failed}
+
+
 def create_plane_issue(task):
     cfg = load_plane_config()
     cookie = cfg.get("cookie")
@@ -965,6 +1043,12 @@ class Handler(BaseHTTPRequestHandler):
             if not found:
                 return self._send_json({"error": "not found"}, status=404)
             result = update_plane_issue(found)
+            if "error" in result:
+                return self._send_json(result, status=502)
+            return self._send_json(result)
+
+        if self.path == "/api/plane-cycle-rollover":
+            result = roll_open_tasks_to_current_cycle()
             if "error" in result:
                 return self._send_json(result, status=502)
             return self._send_json(result)
