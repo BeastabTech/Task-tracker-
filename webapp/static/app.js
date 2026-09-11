@@ -1871,6 +1871,33 @@ document.getElementById("cycleSyncBtn").addEventListener("click", async () => {
   btn.disabled = false;
 });
 
+document.getElementById("bulkLabelSyncBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("bulkLabelSyncBtn");
+  btn.disabled = true;
+  btn.textContent = "🏷️ Syncing…";
+  try {
+    const res = await fetch("/api/plane-bulk-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ only_labels: true }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      showToast("Label sync failed: " + data.error);
+    } else {
+      const msg = data.failed > 0
+        ? `Labels synced: ${data.updated} ok, ${data.failed} failed`
+        : `Labels synced to ${data.updated} Plane issues ✓`;
+      showToast(msg);
+    }
+  } catch (err) {
+    showToast("Label sync failed");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🏷️ Sync labels";
+  }
+});
+
 // Runs at most once per day, automatically — enough to catch a weekly cycle transition without
 // hammering Plane on every page load.
 async function maybeAutoSyncCycles(){

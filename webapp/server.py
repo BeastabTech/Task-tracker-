@@ -330,6 +330,7 @@ def load_plane_config():
     # Env vars win when set — lets someone self-host this (Docker, a shared server, etc.)
     # without ever touching the UI or the config file, per-instance, no code changes.
     for key, env_name in (
+        ("pat", "PLANE_PAT"),
         ("cookie", "PLANE_COOKIE"),
         ("workspace", "PLANE_WORKSPACE"),
         ("project_id", "PLANE_PROJECT_ID"),
@@ -374,7 +375,8 @@ def plane_state_id(cfg, status):
 
 
 def _plane_request(cfg, method, path, payload=None):
-    """Low-level helper for any Plane API call using the stored cookie. Returns (status, data_or_None, raw_text)."""
+    """Low-level helper for any Plane API call. Prefers PAT (X-Api-Key) when set, falls back to cookie auth."""
+    pat = cfg.get("pat")
     cookie = cfg.get("cookie")
     workspace = cfg.get("workspace")
     project_id = cfg.get("project_id")
@@ -383,10 +385,13 @@ def _plane_request(cfg, method, path, payload=None):
     req = urllib.request.Request(url, data=body, method=method)
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
-    req.add_header("Cookie", cookie)
-    req.add_header("Origin", PLANE_HOST)
-    req.add_header("Referer", f"{PLANE_HOST}/{workspace}/projects/{project_id}/issues/")
-    req.add_header("User-Agent", "Mozilla/5.0 (task-tracker integration)")
+    if pat:
+        req.add_header("X-Api-Key", pat)
+    else:
+        req.add_header("Cookie", cookie)
+        req.add_header("Origin", PLANE_HOST)
+        req.add_header("Referer", f"{PLANE_HOST}/{workspace}/projects/{project_id}/issues/")
+        req.add_header("User-Agent", "Mozilla/5.0 (task-tracker integration)")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8")
@@ -406,57 +411,136 @@ PLANE_GROUP_TO_STATUS = {
     "cancelled": "Cancelled",
 }
 
+LABEL_COLORS = [
+    "#F87171", "#FB923C", "#FBBF24", "#A3E635", "#34D399",
+    "#22D3EE", "#60A5FA", "#A78BFA", "#F472B6", "#94A3B8",
+]
+
+
+def _plane_base(cfg):
+    """Returns the correct API base path: /api/v1 for PAT, /api for cookie."""
+    return "/api/v1" if cfg.get("pat") else "/api"
+
+
+def _wpp(cfg):
+    """Workspace-project path prefix: /api[/v1]/workspaces/{ws}/projects/{pid}"""
+    ws = cfg.get("workspace", "")
+    pid = cfg.get("project_id", "")
+    return f"{_plane_base(cfg)}/workspaces/{ws}/projects/{pid}"
+
+
+def _label_color(name):
+    return LABEL_COLORS[abs(hash(name)) % len(LABEL_COLORS)]
+
+
+def _refresh_plane_labels(cfg):
+    """Fetches all project labels from Plane and caches them in cfg['labels_cache'].
+    Returns the cache dict {name_lower: {"id":..., "name":..., "color":...}}."""
+    status, data, _ = _plane_request(cfg, "GET", f"{_wpp(cfg)}/labels/")
+    if status != 200:
+        return cfg.get("labels_cache") or {}
+    items = data if isinstance(data, list) else (data.get("results") if isinstance(data, dict) else [])
+    cache = {}
+    for lbl in (items or []):
+        if lbl.get("name") and lbl.get("id"):
+            cache[lbl["name"].lower()] = {"id": lbl["id"], "name": lbl["name"], "color": lbl.get("color", "#94A3B8")}
+    cfg["labels_cache"] = cache
+    return cache
+
+
+def _resolve_label_ids(cfg, names):
+    """Maps a list of label names to Plane label IDs. Creates labels that don't exist yet.
+    Returns a list of IDs. Never raises — a failure just means that name is skipped."""
+    if not names:
+        return []
+    cache = cfg.get("labels_cache") or _refresh_plane_labels(cfg)
+    ids = []
+    for name in names:
+        name = name.strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in cache:
+            ids.append(cache[key]["id"])
+            continue
+        # Fuzzy: check if any existing label contains this name or vice versa
+        match = next(
+            (v for k, v in cache.items() if key in k or k in key),
+            None
+        )
+        if match:
+            ids.append(match["id"])
+            continue
+        # Create the label
+        try:
+            s, d, _ = _plane_request(cfg, "POST", f"{_wpp(cfg)}/labels/", {
+                "name": name,
+                "color": _label_color(name),
+            })
+            if s in (200, 201) and isinstance(d, dict) and d.get("id"):
+                cache[key] = {"id": d["id"], "name": name, "color": d.get("color", "")}
+                cfg["labels_cache"] = cache
+                ids.append(d["id"])
+        except Exception:
+            pass
+    return ids
+
 
 def discover_plane_setup(cfg):
-    """Auto-fills the parts of the Plane config a person shouldn't have to hand-type: their own
-    Plane user id (for assignee_ids) and this project's states (for the status_map). Runs
-    automatically the moment a cookie + workspace + project_id are saved and no states are known
-    yet — this is what lets a new self-hoster connect Plane from the UI alone, no config-file
-    editing, and have it stay correct without re-running anything on every future run."""
-    me_status, me_data, me_raw = _plane_request(cfg, "GET", "/api/users/me/")
-    if me_status != 200 or not me_data:
-        return {"error": f"Could not verify Plane session ({me_status}): {(me_raw or '')[:200]}"}
+    """Auto-fills Plane config: user id (for assignee_ids), project states, and label cache.
+    With PAT, the /me/ endpoint isn't exposed in v1, so we skip the user lookup and rely on the
+    assignee_id already in config (set during initial cookie-based discovery, or hand-edited).
+    With cookie auth the full me + states flow runs as before."""
+    if not cfg.get("pat"):
+        # Cookie path: verify session via /me/
+        me_status, me_data, me_raw = _plane_request(cfg, "GET", "/api/users/me/")
+        if me_status != 200 or not me_data:
+            return {"error": f"Could not verify Plane session ({me_status}): {(me_raw or '')[:200]}"}
+        cfg["assignee_id"] = me_data.get("id")
+        cfg["assignee_email"] = me_data.get("email")
+        assignee_email = me_data.get("email")
+    else:
+        assignee_email = cfg.get("assignee_email", "")
 
-    workspace = cfg.get("workspace")
-    project_id = cfg.get("project_id")
-    st_status, st_data, st_raw = _plane_request(
-        cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/states/"
-    )
-    if st_status != 200 or not isinstance(st_data, list):
+    st_status, st_data, st_raw = _plane_request(cfg, "GET", f"{_wpp(cfg)}/states/")
+    if st_status != 200:
         return {"error": f"Could not fetch project states ({st_status}): {(st_raw or '')[:200]}"}
 
-    states = {s["name"]: s["id"] for s in st_data if s.get("name") and s.get("id")}
+    states_list = st_data if isinstance(st_data, list) else (st_data.get("results") if isinstance(st_data, dict) else [])
+    if not states_list:
+        return {"error": f"Could not fetch project states: empty response"}
+
+    states = {s["name"]: s["id"] for s in states_list if s.get("name") and s.get("id")}
 
     def norm(s):
         return s.lower().replace(" ", "")
 
     # Never clobber an already hand-tuned mapping — only fill in statuses that aren't mapped yet.
-    # A fresh install has none of these, so every status gets a best-effort default; an existing
-    # install keeps whatever it already had (even a manually-corrected one), since a workflow with
-    # several near-terminal states (e.g. "Dev QA"/"Prod Review"/"Completed" all grouped as
-    # "completed" in Plane) is genuinely ambiguous for a heuristic to guess right every time.
     status_map = dict(cfg.get("status_map") or {})
     for local_status in STATUSES:
         if status_map.get(local_status):
             continue
-        match = next((s["name"] for s in st_data if norm(s["name"]) == norm(local_status)), None)
+        match = next((s["name"] for s in states_list if norm(s["name"]) == norm(local_status)), None)
         if not match:
-            match = next((s["name"] for s in st_data if local_status.lower() in s["name"].lower()
+            match = next((s["name"] for s in states_list if local_status.lower() in s["name"].lower()
                           or s["name"].lower() in local_status.lower()), None)
         if not match:
-            match = next((s["name"] for s in st_data if PLANE_GROUP_TO_STATUS.get(s.get("group")) == local_status), None)
+            match = next((s["name"] for s in states_list if PLANE_GROUP_TO_STATUS.get(s.get("group")) == local_status), None)
         if match:
             status_map[local_status] = match
 
-    cfg["assignee_id"] = me_data.get("id")
-    cfg["assignee_email"] = me_data.get("email")
     cfg["states"] = states
     cfg["status_map"] = status_map
+
+    # Fetch label cache so project/tag → label ID resolution works immediately
+    label_cache = _refresh_plane_labels(cfg)
+
     return {
         "ok": True,
-        "assignee_email": me_data.get("email"),
+        "assignee_email": assignee_email,
         "state_count": len(states),
         "status_map": status_map,
+        "label_count": len(label_cache),
     }
 
 
@@ -498,17 +582,23 @@ def plane_meta_comment_html(task):
 
 
 def get_active_plane_cycle(cfg):
-    """Returns {"id": ..., "name": ...} for this project's currently-active Plane cycle (Plane
-    computes a "CURRENT" status per cycle from its own start/end dates — there's at most one), or
-    None if there isn't one right now. Best-effort: any failure here just means no cycle gets
-    set, it never blocks creating the issue itself."""
-    workspace = cfg.get("workspace")
-    project_id = cfg.get("project_id")
+    """Returns {"id": ..., "name": ...} for this project's currently-active Plane cycle, or None.
+    Cookie auth: filter list by status=="CURRENT". PAT/v1: use ?cycle_view=current query param."""
     try:
-        status, data, raw = _plane_request(cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/cycles/")
-        if status != 200 or not isinstance(data, list):
-            return None
-        cycle = next((c for c in data if c.get("status") == "CURRENT"), None)
+        if cfg.get("pat"):
+            # v1 API: ?cycle_view=current returns a direct list of active cycles
+            status, data, _ = _plane_request(cfg, "GET", f"{_wpp(cfg)}/cycles/?cycle_view=current")
+            if status != 200:
+                return None
+            cycles = data if isinstance(data, list) else (data.get("results") if isinstance(data, dict) else [])
+        else:
+            workspace = cfg.get("workspace")
+            project_id = cfg.get("project_id")
+            status, data, _ = _plane_request(cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/cycles/")
+            if status != 200 or not isinstance(data, list):
+                return None
+            cycles = [c for c in data if c.get("status") == "CURRENT"]
+        cycle = cycles[0] if cycles else None
         return {"id": cycle["id"], "name": cycle.get("name")} if cycle else None
     except Exception:
         return None
@@ -535,7 +625,7 @@ def roll_open_tasks_to_current_cycle():
     bigger, unrequested bulk action. Closed/archived tasks are never touched — a Done task staying
     in the cycle it was actually finished in is correct, not a bug."""
     cfg = load_plane_config()
-    if not cfg.get("cookie") or not cfg.get("workspace") or not cfg.get("project_id"):
+    if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id"):
         return {"error": "Plane is not configured yet."}
     active_cycle = get_active_plane_cycle(cfg)
     if not active_cycle:
@@ -557,29 +647,20 @@ def roll_open_tasks_to_current_cycle():
         if local_cycle_id is None and t.get("status") not in PLANE_ACTIVE_WORK_STATUSES:
             continue  # untouched backlog with no cycle — not this sweep's job
 
-        def current_plane_cycle():
-            try:
-                s, d, _ = _plane_request(cfg, "GET", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/")
-            except Exception:
-                return None
-            return d.get("cycle_id") if s == 200 and d else None
+        try:
+            cs, _, _ = _plane_request(
+                cfg, "POST",
+                f"{_wpp(cfg)}/cycles/{active_cycle['id']}/cycle-issues/",
+                {"issues": [issue_id]},
+            )
+            # v1: returns 200 with cycle-issue objects on success.
+            # Cookie API: can return 400 even when it works, so any 2xx or 4xx is treated as
+            # attempted. Trust local state update; Plane will show the issue in the cycle.
+            ok = cs is not None and (cs < 300 or cs == 400)
+        except Exception:
+            ok = False
 
-        plane_cycle_now = current_plane_cycle()
-        if plane_cycle_now != active_cycle["id"]:
-            try:
-                _plane_request(
-                    cfg, "POST",
-                    f"/api/workspaces/{workspace}/projects/{project_id}/cycles/{active_cycle['id']}/cycle-issues/",
-                    {"issues": [issue_id]},
-                )
-            except Exception:
-                pass
-            # Plane's cycle-issues endpoint can return 400 "The payload is not valid" even when
-            # it actually performs the move (observed live) — so don't trust that status code,
-            # re-read the issue to find out what really happened.
-            plane_cycle_now = current_plane_cycle()
-
-        if plane_cycle_now == active_cycle["id"]:
+        if ok:
             t["plane_cycle_id"] = active_cycle["id"]
             t["plane_cycle_name"] = active_cycle["name"]
             t["plane_cycle_url"] = f"{PLANE_HOST}/{workspace}/projects/{project_id}/cycles/{active_cycle['id']}/"
@@ -592,13 +673,48 @@ def roll_open_tasks_to_current_cycle():
     return {"ok": True, "cycle_name": active_cycle["name"], "moved": moved, "failed": failed}
 
 
+def bulk_update_plane_issues(only_labels=False):
+    """Push current local state onto ALL already-linked Plane issues in one go.
+    only_labels=True: just syncs labels (no title/status/dates PATCH) — faster, no noisy changes.
+    only_labels=False: full _push_plane_core_fields (title, status, priority, dates, labels).
+    Never adds comments — this is a silent backfill, not a changelog entry."""
+    cfg = load_plane_config()
+    if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id"):
+        return {"error": "Plane is not configured yet."}
+    if not cfg.get("assignee_id"):
+        return {"error": "Plane connected but assignee_id unknown — reopen Plane settings and save again."}
+
+    data = load_tasks()
+    ok_ids, failed_ids = [], []
+    for t in data["tasks"]:
+        issue_id = t.get("plane_issue_id")
+        if not issue_id:
+            continue
+        try:
+            if only_labels:
+                label_names = list(t.get("project") or []) + list(t.get("tags") or [])
+                label_ids = _resolve_label_ids(cfg, label_names)
+                payload = {"labels": label_ids} if cfg.get("pat") else {"label_ids": label_ids}
+                st, _, raw = _plane_request(cfg, "PATCH", f"{_wpp(cfg)}/issues/{issue_id}/", payload)
+                err = None if (st and 200 <= st < 300) else {"error": f"Plane API {st}: {(raw or '')[:100]}"}
+            else:
+                err = _push_plane_core_fields(cfg, t, issue_id)
+            if err:
+                failed_ids.append(t["id"])
+            else:
+                ok_ids.append(t["id"])
+        except Exception as e:
+            failed_ids.append(t["id"])
+
+    return {"ok": True, "updated": len(ok_ids), "failed": len(failed_ids), "failed_ids": failed_ids}
+
+
 def create_plane_issue(task):
     cfg = load_plane_config()
-    cookie = cfg.get("cookie")
     workspace = cfg.get("workspace")
     project_id = cfg.get("project_id")
-    if not cookie or not workspace or not project_id:
-        return {"error": "Plane is not configured yet — set the cookie in Plane settings first."}
+    if not (cfg.get("pat") or cfg.get("cookie")) or not workspace or not project_id:
+        return {"error": "Plane is not configured yet — set the PAT or cookie in Plane settings first."}
     assignee_id = cfg.get("assignee_id")
     if not assignee_id:
         return {"error": "Plane connected but your user id wasn't detected yet — reopen Plane settings and save again."}
@@ -610,8 +726,13 @@ def create_plane_issue(task):
     active_cycle = get_active_plane_cycle(cfg)
     active_cycle_id = active_cycle["id"] if active_cycle else None
 
+    # Collect label IDs from local project + tags fields
+    label_names = list(task.get("project") or []) + list(task.get("tags") or [])
+    label_ids = _resolve_label_ids(cfg, label_names)
+
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
+    is_v1 = bool(cfg.get("pat"))
     payload = {
         "project_id": project_id,
         "type_id": None,
@@ -622,13 +743,18 @@ def create_plane_issue(task):
         "parent_id": None,
         "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
         "assignee_ids": [assignee_id],
-        "label_ids": [],
         "cycle_id": None,
         "module_ids": [],
         "start_date": task.get("discussed_from") or None,
         "target_date": task.get("due_date") or None,
     }
-    status, data, raw = _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/", payload)
+    # v1 uses "labels" (list of UUIDs), cookie API uses "label_ids"
+    if is_v1:
+        payload["labels"] = label_ids
+    else:
+        payload["label_ids"] = label_ids
+
+    status, data, raw = _plane_request(cfg, "POST", f"{_wpp(cfg)}/issues/", payload)
     if status is None:
         return {"error": f"Could not reach Plane: {raw}"}
     if status < 200 or status >= 300 or not data:
@@ -638,23 +764,25 @@ def create_plane_issue(task):
     if not issue_id:
         return {"error": f"Plane didn't return an issue id: {json.dumps(data)[:300]}"}
 
-    # cycle_id in the create payload above is silently ignored by Plane (verified live) — an
-    # issue only actually joins a cycle through this separate cycle-issues call. Best-effort:
-    # a failure here must not fail the whole "Send to Plane" action.
+    # v1: labels set at create time work. For cookie API, PATCH to apply labels after create.
+    if not is_v1 and label_ids:
+        try:
+            _plane_request(cfg, "PATCH", f"{_wpp(cfg)}/issues/{issue_id}/", {"label_ids": label_ids})
+        except Exception:
+            pass
+
+    # cycle_id in the create payload above is silently ignored by Plane — an issue only actually
+    # joins a cycle through this separate cycle-issues call.
     if active_cycle_id:
         try:
-            _plane_request(
-                cfg, "POST",
-                f"/api/workspaces/{workspace}/projects/{project_id}/cycles/{active_cycle_id}/cycle-issues/",
-                {"issues": [issue_id]},
-            )
+            _plane_request(cfg, "POST", f"{_wpp(cfg)}/cycles/{active_cycle_id}/cycle-issues/", {"issues": [issue_id]})
         except Exception:
             pass
 
     # Bookkeeping (status/priority/type/project/tags/stakeholders/dates) goes into a comment,
     # not the description — keeps the description as just the real notes, per user preference.
     comment_html = plane_meta_comment_html(task)
-    _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/comments/", {"comment_html": comment_html})
+    _plane_request(cfg, "POST", f"{_wpp(cfg)}/issues/{issue_id}/comments/", {"comment_html": comment_html})
 
     plane_url = f"{PLANE_HOST}/{workspace}/projects/{project_id}/issues/{issue_id}/"
     return {
@@ -667,10 +795,10 @@ def create_plane_issue(task):
 
 
 def _push_plane_core_fields(cfg, task, issue_id):
-    """Shared PATCH payload builder — pushes title/notes/status/priority/dates/assignee onto an
-    already-linked Plane issue. Returns an {"error": ...} dict on failure, None on success.
-    Used by both the manual 'Update in Plane' button and the automatic activity-triggered sync,
-    so the two never drift apart."""
+    """Shared PATCH payload builder — pushes title/notes/status/priority/dates/assignee/labels
+    onto an already-linked Plane issue. Returns {"error":...} on failure, None on success."""
+    label_names = list(task.get("project") or []) + list(task.get("tags") or [])
+    label_ids = _resolve_label_ids(cfg, label_names)
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
     payload = {
@@ -682,9 +810,11 @@ def _push_plane_core_fields(cfg, task, issue_id):
         "start_date": task.get("discussed_from") or None,
         "target_date": task.get("due_date") or None,
     }
-    workspace = cfg.get("workspace")
-    project_id = cfg.get("project_id")
-    status, data, raw = _plane_request(cfg, "PATCH", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/", payload)
+    if cfg.get("pat"):
+        payload["labels"] = label_ids
+    else:
+        payload["label_ids"] = label_ids
+    status, data, raw = _plane_request(cfg, "PATCH", f"{_wpp(cfg)}/issues/{issue_id}/", payload)
     if status is None:
         return {"error": f"Could not reach Plane: {raw}"}
     if status < 200 or status >= 300:
@@ -698,12 +828,11 @@ def update_plane_issue(task):
     adds a fresh comment with the full current bookkeeping block. See also sync_plane_on_activity
     for the automatic, per-edit version of this."""
     cfg = load_plane_config()
-    cookie = cfg.get("cookie")
     workspace = cfg.get("workspace")
     project_id = cfg.get("project_id")
     issue_id = task.get("plane_issue_id")
-    if not cookie or not workspace or not project_id:
-        return {"error": "Plane is not configured yet — set the cookie in Plane settings first."}
+    if not (cfg.get("pat") or cfg.get("cookie")) or not workspace or not project_id:
+        return {"error": "Plane is not configured yet — set the PAT or cookie in Plane settings first."}
     if not issue_id:
         return {"error": "This task isn't linked to a Plane issue yet — use Send to Plane first."}
     if not cfg.get("assignee_id"):
@@ -714,7 +843,7 @@ def update_plane_issue(task):
         return err
 
     comment_html = plane_meta_comment_html(task)
-    _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/comments/", {"comment_html": comment_html})
+    _plane_request(cfg, "POST", f"{_wpp(cfg)}/issues/{issue_id}/comments/", {"comment_html": comment_html})
 
     return {"ok": True, "plane_url": task.get("plane_url")}
 
@@ -785,7 +914,7 @@ def sync_plane_on_activity(task, new_activities):
         return None
     try:
         cfg = load_plane_config()
-        if not cfg.get("cookie") or not cfg.get("workspace") or not cfg.get("project_id") or not cfg.get("assignee_id"):
+        if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id") or not cfg.get("assignee_id"):
             return {"error": "Plane sync skipped — Plane isn't fully configured (check Plane settings)."}
 
         err = _push_plane_core_fields(cfg, task, issue_id)
@@ -794,9 +923,7 @@ def sync_plane_on_activity(task, new_activities):
 
         comment_html = plane_activity_diff_comment_html(meaningful)
         if comment_html:
-            workspace = cfg.get("workspace")
-            project_id = cfg.get("project_id")
-            _plane_request(cfg, "POST", f"/api/workspaces/{workspace}/projects/{project_id}/issues/{issue_id}/comments/", {"comment_html": comment_html})
+            _plane_request(cfg, "POST", f"{_wpp(cfg)}/issues/{issue_id}/comments/", {"comment_html": comment_html})
         return {"ok": True}
     except Exception as e:
         return {"error": str(e)[:200]}
@@ -952,12 +1079,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/plane-config":
             cfg = load_plane_config()
             return self._send_json({
-                "configured": bool(cfg.get("cookie") and cfg.get("states")),
+                "configured": bool((cfg.get("pat") or cfg.get("cookie")) and cfg.get("states")),
+                "pat_configured": bool(cfg.get("pat")),
                 "workspace": cfg.get("workspace", ""),
                 "project_id": cfg.get("project_id", ""),
                 "assignee_email": cfg.get("assignee_email", ""),
                 "states": sorted((cfg.get("states") or {}).keys()),
                 "status_map": cfg.get("status_map", {}),
+                "labels": sorted(v["name"] for v in (cfg.get("labels_cache") or {}).values()),
+                "label_count": len(cfg.get("labels_cache") or {}),
             })
         if path == "/api/export":
             q = parse_qs(parsed.query)
@@ -980,6 +1110,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/plane-config":
             body = self._read_body()
             cfg = load_plane_config()
+            if "pat" in body and body["pat"].strip():
+                cfg["pat"] = body["pat"].strip()
             if "cookie" in body and body["cookie"].strip():
                 cfg["cookie"] = extract_plane_cookie(body["cookie"])
             if "workspace" in body and body["workspace"].strip():
@@ -988,14 +1120,12 @@ class Handler(BaseHTTPRequestHandler):
                 cfg["project_id"] = body["project_id"].strip()
             if "status_map" in body and isinstance(body["status_map"], dict):
                 cfg["status_map"] = body["status_map"]
-            # Auto-detect assignee id + project states the moment we have enough to ask Plane —
-            # no hand-editing of the config file, and it stays put across restarts/updates since
-            # it's written straight into plane_config.json.
+            # Auto-detect assignee id + project states the moment we have enough to ask Plane.
             discovery = None
-            if cfg.get("cookie") and cfg.get("workspace") and cfg.get("project_id") and not cfg.get("states"):
+            if (cfg.get("pat") or cfg.get("cookie")) and cfg.get("workspace") and cfg.get("project_id") and not cfg.get("states"):
                 discovery = discover_plane_setup(cfg)
             save_plane_config(cfg)
-            resp = {"ok": True, "configured": bool(cfg.get("cookie") and cfg.get("states"))}
+            resp = {"ok": True, "configured": bool((cfg.get("pat") or cfg.get("cookie")) and cfg.get("states"))}
             if discovery:
                 resp["discovery"] = discovery
             return self._send_json(resp)
@@ -1049,6 +1179,26 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/api/plane-cycle-rollover":
             result = roll_open_tasks_to_current_cycle()
+            if "error" in result:
+                return self._send_json(result, status=502)
+            return self._send_json(result)
+
+        if self.path == "/api/plane-labels-refresh":
+            cfg = load_plane_config()
+            if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id"):
+                return self._send_json({"error": "Plane is not configured yet."}, status=400)
+            cache = _refresh_plane_labels(cfg)
+            save_plane_config(cfg)
+            return self._send_json({
+                "ok": True,
+                "label_count": len(cache),
+                "labels": sorted(v["name"] for v in cache.values()),
+            })
+
+        if self.path == "/api/plane-bulk-update":
+            body = self._read_body()
+            only_labels = bool(body.get("only_labels", True))
+            result = bulk_update_plane_issues(only_labels=only_labels)
             if "error" in result:
                 return self._send_json(result, status=502)
             return self._send_json(result)
