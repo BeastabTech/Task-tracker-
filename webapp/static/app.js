@@ -676,11 +676,28 @@ function renderUpdateModeSwitch(){
     btn.classList.toggle("active", btn.dataset.updateMode === updateMode);
   });
   const copyBtn = document.getElementById("copyBtn");
-  const copyLabels = { detailed: "Copy detailed update", speak: "Copy talking points", short: "Copy short update" };
+  const copyLabels = {
+    morning: "Copy morning update",
+    evening: "Copy evening wrap-up",
+    detailed: "Copy detailed update",
+    speak: "Copy talking points",
+    short: "Copy short update",
+  };
   if (copyBtn) copyBtn.textContent = copyLabels[updateMode] || copyLabels.short;
   const previewBtn = document.getElementById("previewUpdateBtn");
   const previewOpen = document.getElementById("updatePreviewWrap")?.classList.contains("open");
   if (previewBtn) previewBtn.textContent = previewOpen ? "Hide preview" : "Show preview";
+  const titleEl = document.getElementById("updatePanelTitle");
+  if (titleEl) {
+    const titles = {
+      morning: "Active work · New tasks · Overdue · Backlog",
+      evening: "Completed today · In progress · New tasks · Carry forward",
+      detailed: "Yesterday / Today / Blockers / Backlog",
+      speak: "Yesterday / Today / Blockers / Backlog",
+      short: "Yesterday / Today / Blockers / Backlog",
+    };
+    titleEl.textContent = titles[updateMode] || titles.short;
+  }
 }
 
 function renderList(visible){
@@ -1923,7 +1940,7 @@ document.querySelectorAll("[data-view-mode]").forEach(btn => {
 
 document.querySelectorAll("[data-update-mode]").forEach(btn => {
   btn.addEventListener("click", () => {
-    updateMode = ["detailed", "speak"].includes(btn.dataset.updateMode) ? btn.dataset.updateMode : "short";
+    updateMode = ["morning", "evening", "detailed", "speak", "short"].includes(btn.dataset.updateMode) ? btn.dataset.updateMode : "short";
     localStorage.setItem("dailyUpdateMode", updateMode);
     renderUpdateModeSwitch();
     if (document.getElementById("updatePreviewWrap").classList.contains("open")) refreshUpdatePreview(true);
@@ -2172,6 +2189,23 @@ function buildUpdateContext(){
     .map(entry => formatUpdateTask(entry));
   const backlogRows = backlogTasks().map(t => formatUpdateTask(t));
 
+  const rawCurrentActive = tasks
+    .filter(t => !t.archived_at && ACTIVE_WORK_STATUSES.has(t.status))
+    .sort((a,b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
+
+  // Tasks created today (created_at starts with today's date)
+  const rawNewToday = tasks
+    .filter(t => !t.archived_at && (t.created_at || "").startsWith(today))
+    .sort((a,b) => (a.created_at || "").localeCompare(b.created_at || ""));
+
+  // Tasks created yesterday (for morning: new since last evening)
+  const rawNewSinceYesterday = tasks
+    .filter(t => !t.archived_at && (t.created_at || "").startsWith(yesterday))
+    .sort((a,b) => (a.created_at || "").localeCompare(b.created_at || ""));
+
+  // Tasks linked to Plane (plane_issue_id null = not yet sent)
+  const rawUnsentToPlane = rawCurrentActive.filter(t => !t.plane_issue_id);
+
   return {
     today,
     yesterday,
@@ -2185,16 +2219,145 @@ function buildUpdateContext(){
     currentActive,
     otherToday,
     backlogRows,
-    rawCurrentActive: tasks
-      .filter(t => !t.archived_at && ACTIVE_WORK_STATUSES.has(t.status))
-      .sort((a,b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9)),
+    rawCurrentActive,
     rawBacklog: backlogTasks(),
     rawCancelledToday: todayEntries.filter(entry => entry.status === "Cancelled").map(entry => entry.task),
     rawCompletedToday: todayEntries.filter(entry => entry.status === "Done").map(entry => entry.task),
     rawCompletedYesterday: yesterdayEntries.filter(entry => entry.status === "Done").map(entry => entry.task),
     rawYesterdayCarry,
+    rawNewToday,
+    rawNewSinceYesterday,
+    rawUnsentToPlane,
   };
 }
+
+// ── helpers for rich morning / evening formats ──────────────────────────────
+
+function taskMeta(t){
+  const parts = [];
+  if ((t.project || []).length) parts.push((t.project).join(", "));
+  if (t.priority && t.priority !== "P3") parts.push(t.priority);
+  if (t.due_date && !isClosed(t)) parts.push(`due ${fmtDate(t.due_date)}`);
+  return parts.length ? `  [${parts.join(" · ")}]` : "";
+}
+
+function taskNote(t, indent = "    "){
+  const note = (t.notes || "").trim();
+  if (!note) return "";
+  return `\n${indent}→ ${clipText(note, 120)}`;
+}
+
+function taskLine(t, prefix = "•"){
+  return `  ${prefix} ${escapeHtml ? t.title : t.title}${taskMeta(t)}${taskNote(t)}`;
+}
+
+function sectionBlock(emoji, heading, lines, fallback = "  (none)"){
+  return [`${emoji} ${heading}`, ...(lines.length ? lines : [fallback])].join("\n");
+}
+
+// ── Morning Update ───────────────────────────────────────────────────────────
+
+function buildMorningUpdateText(context){
+  const { today, yesterday, rawCurrentActive, rawNewSinceYesterday, rawNewToday, rawBacklog } = context;
+  const lines = [`☀️  Morning Update — ${fmtDate(today)}`, ""];
+
+  // Active work — all statuses (In Progress / In Review / Pending)
+  const activeLines = rawCurrentActive.map(t => {
+    const statusTag = t.status === "Pending" ? "⏸ Pending" : t.status === "In Review" ? "👀 In Review" : "▶ In Progress";
+    return `  • [${statusTag}] ${t.title}${taskMeta(t)}${taskNote(t)}`;
+  });
+  lines.push(sectionBlock("🔄", `Active Work (${rawCurrentActive.length})`, activeLines));
+  lines.push("");
+
+  // New tasks added since yesterday (carry-in for today's morning)
+  const newYestLines = rawNewSinceYesterday.map(t =>
+    `  • [${t.id}] ${t.title}${taskMeta(t)}${taskNote(t)}`
+  );
+  if (newYestLines.length) {
+    lines.push(sectionBlock("🆕", `New Tasks Added Yesterday (${newYestLines.length})`, newYestLines));
+    lines.push("");
+  }
+
+  // New tasks added today so far (if running after some work)
+  const newTodayLines = rawNewToday.map(t =>
+    `  • [${t.id}] ${t.title}${taskMeta(t)}${taskNote(t)}`
+  );
+  if (newTodayLines.length) {
+    lines.push(sectionBlock("🆕", `New Tasks Added Today (${newTodayLines.length})`, newTodayLines));
+    lines.push("");
+  }
+
+  // Overdue tasks
+  const overdueList = tasks.filter(t => !t.archived_at && isOverdue(t));
+  if (overdueList.length) {
+    const overdueLines = overdueList.map(t =>
+      `  • ${t.title}${taskMeta(t)} — was due ${fmtDate(t.due_date)}`
+    );
+    lines.push(sectionBlock("⚠️", `Overdue (${overdueList.length})`, overdueLines));
+    lines.push("");
+  }
+
+  // Backlog focus
+  const backlogLines = rawBacklog.slice(0, backlogLimit).map(t => `  • ${t.title}${taskMeta(t)}`);
+  lines.push(sectionBlock("📋", `Backlog Focus (top ${Math.min(backlogLimit, rawBacklog.length)})`, backlogLines, "  (backlog clear)"));
+
+  return lines.join("\n");
+}
+
+// ── Evening Update ───────────────────────────────────────────────────────────
+
+function buildEveningUpdateText(context){
+  const { today, rawCompletedToday, rawCurrentActive, rawNewToday, rawCancelledToday, rawUnsentToPlane } = context;
+  const lines = [`🌙  Evening Wrap-up — ${fmtDate(today)}`, ""];
+
+  // Completed today
+  const completedLines = rawCompletedToday.map(t =>
+    `  • ${t.title}${taskMeta(t)}${taskNote(t)}`
+  );
+  lines.push(sectionBlock("✅", `Completed Today (${rawCompletedToday.length})`, completedLines, "  (nothing closed today)"));
+  lines.push("");
+
+  // Still in progress — what carries to tomorrow
+  const inProgressLines = rawCurrentActive.map(t => {
+    const statusTag = t.status === "Pending" ? "⏸" : t.status === "In Review" ? "👀" : "▶";
+    return `  • ${statusTag} ${t.title}${taskMeta(t)}${taskNote(t)}`;
+  });
+  lines.push(sectionBlock("🔄", `Still In Progress — carries to tomorrow (${rawCurrentActive.length})`, inProgressLines));
+  lines.push("");
+
+  // New tasks added today
+  const newLines = rawNewToday.map(t =>
+    `  • [${t.id}] ${t.title}${taskMeta(t)}${taskNote(t)}`
+  );
+  if (newLines.length) {
+    lines.push(sectionBlock("🆕", `New Tasks Added Today (${newLines.length})`, newLines));
+    lines.push("");
+  }
+
+  // Cancelled today
+  if (rawCancelledToday.length) {
+    const cancelLines = rawCancelledToday.map(t =>
+      `  • ${t.title}${t.cancel_reason ? ` — ${clipText(t.cancel_reason, 80)}` : ""}`
+    );
+    lines.push(sectionBlock("❌", `Cancelled Today (${rawCancelledToday.length})`, cancelLines));
+    lines.push("");
+  }
+
+  // Tasks not yet sent to Plane
+  if (rawUnsentToPlane.length) {
+    const unsentLines = rawUnsentToPlane.map(t => `  • [${t.id}] ${t.title}${taskMeta(t)}`);
+    lines.push(sectionBlock("📤", `Not Yet in Plane (${rawUnsentToPlane.length})`, unsentLines));
+    lines.push("");
+  }
+
+  // Summary line
+  const total = rawCompletedToday.length + rawCurrentActive.length;
+  lines.push(`📊  Day total: ${rawCompletedToday.length} done · ${rawCurrentActive.length} in progress · ${rawNewToday.length} new`);
+
+  return lines.join("\n");
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 function buildDetailedUpdateText(context){
   const {
@@ -2317,6 +2480,8 @@ function buildStandupSpeakText(context){
 
 function buildDailyUpdateText(mode = updateMode){
   const context = buildUpdateContext();
+  if (mode === "morning") return buildMorningUpdateText(context);
+  if (mode === "evening") return buildEveningUpdateText(context);
   if (mode === "detailed") return buildDetailedUpdateText(context);
   if (mode === "speak") return buildStandupSpeakText(context);
   return buildShortUpdateText(context);
