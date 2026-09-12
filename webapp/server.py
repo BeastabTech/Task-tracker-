@@ -374,12 +374,16 @@ def plane_state_id(cfg, status):
     return (cfg.get("states") or {}).get(state_name)
 
 
-def _plane_request(cfg, method, path, payload=None):
-    """Low-level helper for any Plane API call. Prefers PAT (X-Api-Key) when set, falls back to cookie auth."""
-    pat = cfg.get("pat")
+def _plane_request(cfg, method, path, payload=None, force_cookie=False):
+    """Low-level helper for any Plane API call. Prefers PAT (X-Api-Key) when set, falls back to cookie auth.
+    Pass force_cookie=True to skip PAT and use cookie even when PAT is configured (e.g. on rate-limit)."""
+    pat = cfg.get("pat") if not force_cookie else None
     cookie = cfg.get("cookie")
     workspace = cfg.get("workspace")
     project_id = cfg.get("project_id")
+    # Cookie auth uses /api/ prefix; PAT uses /api/v1/ — translate path when forcing cookie on a v1 path
+    if force_cookie and path.startswith("/api/v1/"):
+        path = "/api/" + path[len("/api/v1/"):]
     url = f"{PLANE_HOST}{path}"
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=body, method=method)
@@ -678,6 +682,7 @@ def bulk_update_plane_issues(only_labels=False):
     only_labels=True: just syncs labels (no title/status/dates PATCH) — faster, no noisy changes.
     only_labels=False: full _push_plane_core_fields (title, status, priority, dates, labels).
     Never adds comments — this is a silent backfill, not a changelog entry."""
+    import time
     cfg = load_plane_config()
     if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id"):
         return {"error": "Plane is not configured yet."}
@@ -685,18 +690,49 @@ def bulk_update_plane_issues(only_labels=False):
         return {"error": "Plane connected but assignee_id unknown — reopen Plane settings and save again."}
 
     data = load_tasks()
-    ok_ids, failed_ids = [], []
-    for t in data["tasks"]:
-        issue_id = t.get("plane_issue_id")
-        if not issue_id:
-            continue
+    linked = [t for t in data["tasks"] if t.get("plane_issue_id")]
+
+    if only_labels:
+        # Pre-resolve all unique label names up front to avoid per-task API calls during PATCH loop
+        all_names = set()
+        for t in linked:
+            for name in list(t.get("project") or []) + list(t.get("tags") or []):
+                n = name.strip()
+                if n:
+                    all_names.add(n)
+        _resolve_label_ids(cfg, list(all_names))  # populates cache, creates missing labels
+        save_plane_config(cfg)
+
+    ok_ids, failed_ids, errors = [], [], {}
+    is_pat = bool(cfg.get("pat"))
+    has_cookie = bool(cfg.get("cookie"))
+    wpp = _wpp(cfg)
+    # If PAT gets rate-limited, flip to cookie for the rest of this run
+    use_cookie_fallback = False
+
+    for i, t in enumerate(linked):
+        issue_id = t["plane_issue_id"]
+        if i > 0 and i % 10 == 0:
+            time.sleep(0.5)
         try:
             if only_labels:
                 label_names = list(t.get("project") or []) + list(t.get("tags") or [])
                 label_ids = _resolve_label_ids(cfg, label_names)
-                payload = {"labels": label_ids} if cfg.get("pat") else {"label_ids": label_ids}
-                st, _, raw = _plane_request(cfg, "PATCH", f"{_wpp(cfg)}/issues/{issue_id}/", payload)
-                err = None if (st and 200 <= st < 300) else {"error": f"Plane API {st}: {(raw or '')[:100]}"}
+                # When using cookie fallback, label field name is label_ids and path is /api/ (handled in _plane_request)
+                if use_cookie_fallback:
+                    payload = {"label_ids": label_ids}
+                    st, _, raw = _plane_request(cfg, "PATCH", f"{wpp}/issues/{issue_id}/", payload, force_cookie=True)
+                else:
+                    payload = {"labels": label_ids} if is_pat else {"label_ids": label_ids}
+                    st, _, raw = _plane_request(cfg, "PATCH", f"{wpp}/issues/{issue_id}/", payload)
+                    if st == 429 and has_cookie:
+                        # Switch to cookie for this and all remaining requests
+                        use_cookie_fallback = True
+                        payload = {"label_ids": label_ids}
+                        st, _, raw = _plane_request(cfg, "PATCH", f"{wpp}/issues/{issue_id}/", payload, force_cookie=True)
+                err = None if (st and 200 <= st < 300) else {"error": f"Plane API {st}"}
+                if err:
+                    errors[t["id"]] = f"HTTP {st}: {(raw or '')[:80]}"
             else:
                 err = _push_plane_core_fields(cfg, t, issue_id)
             if err:
@@ -705,8 +741,12 @@ def bulk_update_plane_issues(only_labels=False):
                 ok_ids.append(t["id"])
         except Exception as e:
             failed_ids.append(t["id"])
+            errors[t["id"]] = str(e)
 
-    return {"ok": True, "updated": len(ok_ids), "failed": len(failed_ids), "failed_ids": failed_ids}
+    result = {"ok": True, "updated": len(ok_ids), "failed": len(failed_ids), "failed_ids": failed_ids}
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 def create_plane_issue(task):
