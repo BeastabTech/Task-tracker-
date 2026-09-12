@@ -399,12 +399,18 @@ def _plane_request(cfg, method, path, payload=None, force_cookie=False):
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8")
-            return resp.status, (json.loads(raw) if raw else None), raw
+            try:
+                parsed = json.loads(raw) if raw else None
+            except Exception:
+                parsed = None
+            return resp.status, parsed, raw
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace")
         return e.code, None, raw
     except urllib.error.URLError as e:
         return None, None, str(e.reason)
+    except Exception as e:
+        return None, None, str(e)
 
 
 PLANE_GROUP_TO_STATUS = {
@@ -766,9 +772,12 @@ def create_plane_issue(task):
     active_cycle = get_active_plane_cycle(cfg)
     active_cycle_id = active_cycle["id"] if active_cycle else None
 
-    # Collect label IDs from local project + tags fields
+    # Collect label IDs from local project + tags fields — failure is non-fatal
     label_names = list(task.get("project") or []) + list(task.get("tags") or [])
-    label_ids = _resolve_label_ids(cfg, label_names)
+    try:
+        label_ids = _resolve_label_ids(cfg, label_names)
+    except Exception:
+        label_ids = []
 
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
@@ -838,7 +847,10 @@ def _push_plane_core_fields(cfg, task, issue_id):
     """Shared PATCH payload builder — pushes title/notes/status/priority/dates/assignee/labels
     onto an already-linked Plane issue. Returns {"error":...} on failure, None on success."""
     label_names = list(task.get("project") or []) + list(task.get("tags") or [])
-    label_ids = _resolve_label_ids(cfg, label_names)
+    try:
+        label_ids = _resolve_label_ids(cfg, label_names)
+    except Exception:
+        label_ids = []
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
     payload = {
