@@ -756,32 +756,29 @@ def bulk_update_plane_issues(only_labels=False):
 
 
 OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
 
 _AI_PROMPTS = {
     "title": (
-        "You are a task naming assistant. Given a rough task description, write a concise, "
-        "clear task title (max 12 words, no quotes, no period at end). "
-        "Reply with ONLY the title text, nothing else.\n\nDescription: {input}"
+        "Write a task title (max 8 words, no quotes, no period). Engineering/backend context. "
+        "Reply with ONLY the title.\n\nDescription: {input}"
     ),
     "description": (
-        "You are a task description writer. Given a task title and optional context, write a clear, "
-        "concise task description (2-4 sentences, plain text, no markdown). Focus on what needs to be done and why. "
-        "Reply with ONLY the description, nothing else.\n\nTask: {input}"
+        "Write a 2-sentence task description. Plain text, no markdown. What needs to be done and why. "
+        "Direct and specific — no filler phrases.\n\nTask: {input}"
     ),
     "labels": (
-        "You are a project categorization assistant. Given a task title and description, suggest 1-3 "
-        "short label/tag names (lowercase, hyphenated, no spaces, e.g. 'backend-api', 'devops', 'auth'). "
-        "Reply with ONLY a comma-separated list of labels, nothing else.\n\nTask: {input}"
+        "Suggest 1-3 labels for this task. Lowercase, hyphenated (e.g. devops, backend-api, iot, security). "
+        "Reply with ONLY a comma-separated list.\n\nTask: {input}"
     ),
     "standup": (
-        "You are a standup update writer. Given a list of tasks with their status and notes, "
-        "write a concise daily standup update (plain text, no markdown, 5-10 lines). "
-        "Format: what was done, what's in progress, any blockers. Be specific and professional.\n\nTasks:\n{input}"
+        "Write a daily standup update from these tasks. Plain text, bullet points with *, no markdown headers. "
+        "3 sections: Yesterday, Today, Blockers. Be direct and specific — skip anything with no real update. "
+        "Max 12 lines total. No corporate filler.\n\nTasks:\n{input}"
     ),
     "summarize": (
-        "You are a task summarizer. Summarize the following task context into 1-2 clear sentences "
-        "suitable for a quick standup mention. Reply with ONLY the summary, nothing else.\n\nTask: {input}"
+        "Summarize this task in 1 sentence for a standup. Direct, specific, no filler. "
+        "Reply with ONLY the sentence.\n\nTask: {input}"
     ),
 }
 
@@ -818,10 +815,15 @@ def ai_generate(body):
             # Strip any residual <think>...</think> blocks
             text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
             return {"ok": True, "result": text, "model": model}
+    except urllib.error.HTTPError as e:
+        body = ""
+        try: body = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception: pass
+        return {"error": f"Ollama HTTP {e.code}: {e.reason} — {body}"}
     except urllib.error.URLError as e:
         return {"error": f"Ollama not reachable: {e.reason}"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 def create_plane_issue(task):
@@ -849,7 +851,7 @@ def create_plane_issue(task):
         label_ids = []
 
     notes = (task.get("notes") or "").strip()
-    desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
+    desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else "<p></p>"
     is_v1 = bool(cfg.get("pat"))
     payload = {
         "project_id": project_id,
@@ -921,7 +923,7 @@ def _push_plane_core_fields(cfg, task, issue_id):
     except Exception:
         label_ids = []
     notes = (task.get("notes") or "").strip()
-    desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else ""
+    desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else "<p></p>"
     payload = {
         "name": task.get("title", "Untitled task")[:255],
         "description_html": desc_html,
