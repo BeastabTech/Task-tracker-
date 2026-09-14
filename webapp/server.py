@@ -465,6 +465,7 @@ def _resolve_label_ids(cfg, names):
         return []
     cache = cfg.get("labels_cache") or _refresh_plane_labels(cfg)
     ids = []
+    cache_refreshed = False
     for name in names:
         name = name.strip()
         if not name:
@@ -474,21 +475,34 @@ def _resolve_label_ids(cfg, names):
             ids.append(cache[key]["id"])
             continue
         # Fuzzy: check if any existing label contains this name or vice versa
-        match = next(
-            (v for k, v in cache.items() if key in k or k in key),
-            None
-        )
+        match = next((v for k, v in cache.items() if key in k or k in key), None)
         if match:
             ids.append(match["id"])
             continue
-        # Create the label
+        # Cache miss — refresh once from Plane before trying to create
+        if not cache_refreshed:
+            cache = _refresh_plane_labels(cfg)
+            cache_refreshed = True
+            if key in cache:
+                ids.append(cache[key]["id"])
+                continue
+            match = next((v for k, v in cache.items() if key in k or k in key), None)
+            if match:
+                ids.append(match["id"])
+                continue
+        # Try to create the label
         try:
-            s, d, _ = _plane_request(cfg, "POST", f"{_wpp(cfg)}/labels/", {
+            s, d, raw = _plane_request(cfg, "POST", f"{_wpp(cfg)}/labels/", {
                 "name": name,
                 "color": _label_color(name),
             })
             if s in (200, 201) and isinstance(d, dict) and d.get("id"):
                 cache[key] = {"id": d["id"], "name": name, "color": d.get("color", "")}
+                cfg["labels_cache"] = cache
+                ids.append(d["id"])
+            elif s == 409 and isinstance(d, dict) and d.get("id"):
+                # Label already exists in Plane but wasn't in our cache
+                cache[key] = {"id": d["id"], "name": name, "color": ""}
                 cfg["labels_cache"] = cache
                 ids.append(d["id"])
         except Exception:
@@ -853,13 +867,13 @@ def create_plane_issue(task):
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else "<p></p>"
     is_v1 = bool(cfg.get("pat"))
+    sid = plane_state_id(cfg, task.get("status"))
     payload = {
         "project_id": project_id,
         "type_id": None,
         "name": task.get("title", "Untitled task")[:255],
         "description_html": desc_html,
         "estimate_point": None,
-        "state_id": plane_state_id(cfg, task.get("status")),
         "parent_id": None,
         "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
         "assignee_ids": [assignee_id],
@@ -868,10 +882,12 @@ def create_plane_issue(task):
         "start_date": task.get("discussed_from") or None,
         "target_date": task.get("due_date") or None,
     }
-    # v1 uses "labels" (list of UUIDs), cookie API uses "label_ids"
+    # v1 (PAT) uses "state" UUID directly and "labels"; cookie API uses "state_id" and "label_ids"
     if is_v1:
+        payload["state"] = sid
         payload["labels"] = label_ids
     else:
+        payload["state_id"] = sid
         payload["label_ids"] = label_ids
 
     status, data, raw = _plane_request(cfg, "POST", f"{_wpp(cfg)}/issues/", payload)
@@ -924,18 +940,22 @@ def _push_plane_core_fields(cfg, task, issue_id):
         label_ids = []
     notes = (task.get("notes") or "").strip()
     desc_html = f'<p class="editor-paragraph-block">{escape_html_py(notes)}</p>' if notes else "<p></p>"
+    sid = plane_state_id(cfg, task.get("status"))
+    is_pat = bool(cfg.get("pat"))
     payload = {
         "name": task.get("title", "Untitled task")[:255],
         "description_html": desc_html,
-        "state_id": plane_state_id(cfg, task.get("status")),
         "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
         "assignee_ids": [cfg.get("assignee_id")],
         "start_date": task.get("discussed_from") or None,
         "target_date": task.get("due_date") or None,
     }
-    if cfg.get("pat"):
+    # v1 (PAT) uses "state" UUID directly; legacy cookie API uses "state_id"
+    if is_pat:
+        payload["state"] = sid
         payload["labels"] = label_ids
     else:
+        payload["state_id"] = sid
         payload["label_ids"] = label_ids
     status, data, raw = _plane_request(cfg, "PATCH", f"{_wpp(cfg)}/issues/{issue_id}/", payload)
     if status is None:
