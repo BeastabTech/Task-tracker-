@@ -755,6 +755,75 @@ def bulk_update_plane_issues(only_labels=False):
     return result
 
 
+OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b")
+
+_AI_PROMPTS = {
+    "title": (
+        "You are a task naming assistant. Given a rough task description, write a concise, "
+        "clear task title (max 12 words, no quotes, no period at end). "
+        "Reply with ONLY the title text, nothing else.\n\nDescription: {input}"
+    ),
+    "description": (
+        "You are a task description writer. Given a task title and optional context, write a clear, "
+        "concise task description (2-4 sentences, plain text, no markdown). Focus on what needs to be done and why. "
+        "Reply with ONLY the description, nothing else.\n\nTask: {input}"
+    ),
+    "labels": (
+        "You are a project categorization assistant. Given a task title and description, suggest 1-3 "
+        "short label/tag names (lowercase, hyphenated, no spaces, e.g. 'backend-api', 'devops', 'auth'). "
+        "Reply with ONLY a comma-separated list of labels, nothing else.\n\nTask: {input}"
+    ),
+    "standup": (
+        "You are a standup update writer. Given a list of tasks with their status and notes, "
+        "write a concise daily standup update (plain text, no markdown, 5-10 lines). "
+        "Format: what was done, what's in progress, any blockers. Be specific and professional.\n\nTasks:\n{input}"
+    ),
+    "summarize": (
+        "You are a task summarizer. Summarize the following task context into 1-2 clear sentences "
+        "suitable for a quick standup mention. Reply with ONLY the summary, nothing else.\n\nTask: {input}"
+    ),
+}
+
+
+def ai_generate(body):
+    mode = body.get("mode", "description")
+    text_input = (body.get("input") or "").strip()
+    model = body.get("model") or OLLAMA_MODEL
+    if not text_input:
+        return {"error": "input is required"}
+    prompt_tpl = _AI_PROMPTS.get(mode)
+    if not prompt_tpl:
+        return {"error": f"unknown mode '{mode}'. Valid: {list(_AI_PROMPTS)}"}
+    prompt = prompt_tpl.format(input=text_input)
+    # Use chat API with think:false so reasoning models don't suppress their output
+    payload = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0.4, "num_predict": 300},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_BASE}/api/chat",
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            msg = data.get("message") or {}
+            text = (msg.get("content") or "").strip()
+            # Strip any residual <think>...</think> blocks
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            return {"ok": True, "result": text, "model": model}
+    except urllib.error.URLError as e:
+        return {"error": f"Ollama not reachable: {e.reason}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def create_plane_issue(task):
     cfg = load_plane_config()
     workspace = cfg.get("workspace")
@@ -1251,6 +1320,13 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             only_labels = bool(body.get("only_labels", True))
             result = bulk_update_plane_issues(only_labels=only_labels)
+            if "error" in result:
+                return self._send_json(result, status=502)
+            return self._send_json(result)
+
+        if self.path == "/api/ai-generate":
+            body = self._read_body()
+            result = ai_generate(body)
             if "error" in result:
                 return self._send_json(result, status=502)
             return self._send_json(result)
