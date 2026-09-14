@@ -756,7 +756,7 @@ def bulk_update_plane_issues(only_labels=False):
 
 
 OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b")
 
 _AI_PROMPTS = {
     "title": (
