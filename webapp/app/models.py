@@ -31,6 +31,7 @@ def normalize_task(task):
     task["archived_at"] = task.get("archived_at") or None
     task["plane_issue_id"] = task.get("plane_issue_id") or None
     task["plane_url"] = task.get("plane_url") or None
+    task["plane_number"] = task.get("plane_number") or None
     task["plane_cycle_id"] = task.get("plane_cycle_id") or None
     task["plane_cycle_name"] = task.get("plane_cycle_name") or None
     task["plane_cycle_url"] = task.get("plane_cycle_url") or None

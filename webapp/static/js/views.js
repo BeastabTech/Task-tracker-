@@ -45,7 +45,7 @@ export function visibleTaskFilter(t, todayActivityIds){
   if (state.dateFrom && (t.updated_at || "") < state.dateFrom) return false;
   if (state.dateTo && (t.updated_at || "") > state.dateTo) return false;
   if (state.searchTerm) {
-    const hay = [t.title, t.notes, ...(t.discussed_with||[]), ...(t.project||[]), ...(t.tags||[])].join(" ").toLowerCase();
+    const hay = [t.id, t.plane_number, t.title, t.notes, ...(t.discussed_with||[]), ...(t.project||[]), ...(t.tags||[])].join(" ").toLowerCase();
     if (!hay.includes(state.searchTerm.toLowerCase())) return false;
   }
   return true;
@@ -206,7 +206,7 @@ export function compactTaskRow(t, label){
   row.innerHTML = `
     <span class="row-status status-${slug(label || t.status)}">${escapeHtml(label || t.status)}</span>
     <span class="row-main">
-      <span class="row-title">${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</span>
+      <span class="row-title"><span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}</span> ${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</span>
       <span class="row-meta">${escapeHtml(taskMetaLine(t) || (t.updated_at ? `Updated ${fmtDate(t.updated_at)}` : ""))}</span>
     </span>
     <span class="row-priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
@@ -594,7 +594,7 @@ export function renderKanbanCard(t){
   card.draggable = true;
   const nextStatus = nextWorkflowStatus(t.status);
   card.innerHTML = `
-    <div class="kanban-title">${escapeHtml(t.title)}</div>
+    <div class="kanban-title"><span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}${t.plane_number ? ` · ${escapeHtml(t.plane_number)}` : ""}</span> ${escapeHtml(t.title)}</div>
     <div class="kanban-meta">
       <span class="row-priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
       ${t.due_date ? `<span class="${isOverdue(t) ? "date-overdue" : ""}">Due ${fmtDate(t.due_date)}</span>` : ""}
@@ -846,6 +846,7 @@ export function renderCardReadOnly(card, t, statusHtml){
     ${statusHtml}
     <div style="flex:1;min-width:0;">
       <div class="title-row">
+        <span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}${t.plane_number ? ` · ${escapeHtml(t.plane_number)}` : ""}</span>
         <span class="title-static">${escapeHtml(t.title)}</span>
         <button type="button" class="ai-assist-btn task-ask-btn" title="Ask AI about this task">🤖</button>
         <button type="button" class="edit-btn">✎ Edit</button>
@@ -898,6 +899,7 @@ export function renderCardEditing(card, t, statusHtml){
     ${statusHtml}
     <div style="flex:1;min-width:0;">
       <div class="title-row">
+        <span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}${t.plane_number ? ` · ${escapeHtml(t.plane_number)}` : ""}</span>
         <span class="title" contenteditable="true" spellcheck="false">${escapeHtml(t.title)}</span>
         <button type="button" class="ai-assist-btn" title="AI assist">✨</button>
         <button type="button" class="done-edit-btn">✓ Done</button>

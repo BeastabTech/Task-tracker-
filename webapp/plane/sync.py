@@ -230,6 +230,25 @@ def bulk_update_plane_issues(only_labels=False):
     return result
 
 
+def get_project_identifier(cfg):
+    """Plane's short project prefix (e.g. "TKT") used to build human-readable issue numbers
+    like "TKT-1549" from an issue's sequence_id. Cached in plane_config.json once fetched —
+    it never changes for a given project."""
+    identifier = cfg.get("project_identifier")
+    if identifier:
+        return identifier
+    try:
+        status, data, _ = plane_request(cfg, "GET", f"{wpp(cfg)}/")
+        if status == 200 and isinstance(data, dict) and data.get("identifier"):
+            identifier = data["identifier"]
+            cfg["project_identifier"] = identifier
+            save_plane_config(cfg)
+            return identifier
+    except Exception:
+        pass
+    return None
+
+
 def create_plane_issue(task):
     cfg = load_plane_config()
     workspace = cfg.get("workspace")
@@ -311,10 +330,15 @@ def create_plane_issue(task):
     comment_html = plane_meta_comment_html(task)
     plane_request(cfg, "POST", f"{wpp(cfg)}/issues/{issue_id}/comments/", {"comment_html": comment_html})
 
+    identifier = get_project_identifier(cfg)
+    seq = data.get("sequence_id")
+    plane_number = f"{identifier}-{seq}" if identifier and seq else None
+
     plane_url = f"{PLANE_HOST}/{workspace}/projects/{project_id}/issues/{issue_id}/"
     return {
         "plane_issue_id": issue_id,
         "plane_url": plane_url,
+        "plane_number": plane_number,
         "plane_cycle_id": active_cycle_id,
         "plane_cycle_name": active_cycle["name"] if active_cycle else None,
         "plane_cycle_url": f"{PLANE_HOST}/{workspace}/projects/{project_id}/cycles/{active_cycle_id}/" if active_cycle_id else None,

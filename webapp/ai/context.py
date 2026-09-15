@@ -58,6 +58,8 @@ def build_task_context(task):
     if attachments:
         lines.append(f"Attachments: {len(attachments)} file(s)")
 
+    if task.get("plane_number"):
+        lines.append(f"Plane issue: {task['plane_number']}")
     if task.get("plane_url"):
         lines.append(f"Plane link: {task['plane_url']}")
     if task.get("plane_cycle_name"):

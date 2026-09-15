@@ -73,6 +73,7 @@ def send_to_plane(handler, m):
         return handler._send_json(result, status=502)
     found["plane_issue_id"] = result["plane_issue_id"]
     found["plane_url"] = result["plane_url"]
+    found["plane_number"] = result.get("plane_number")
     found["plane_cycle_id"] = result.get("plane_cycle_id")
     found["plane_cycle_name"] = result.get("plane_cycle_name")
     found["plane_cycle_url"] = result.get("plane_cycle_url")

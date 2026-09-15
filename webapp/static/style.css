@@ -251,6 +251,7 @@ input[type=number]{width:62px;}
 .card .title{font-weight:600;font-size:.92rem;flex:1;min-width:160px;cursor:text;}
 .card.done .title, .card.done .title-static,.card.cancelled .title,.card.cancelled .title-static{text-decoration:line-through;}
 .title-static{font-weight:700;font-size:.96rem;flex:1;min-width:120px;overflow-wrap:anywhere;}
+.task-id-badge{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.68rem;font-weight:600;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:.1rem .4rem;white-space:nowrap;flex:0 0 auto;}
 .notes-static{font-size:.8rem;color:var(--text-muted);margin-top:.4rem;}
 .criteria-list{margin:.4rem 0 0;padding-left:1.1rem;font-size:.78rem;color:var(--text-muted);display:flex;flex-direction:column;gap:.15rem;}
 .criteria-list li{list-style:"☐  ";}

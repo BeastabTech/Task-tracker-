@@ -71,7 +71,8 @@ def _compact_line(t):
     if is_stale(t):
         flags.append("stale")
     flag_str = f" [{','.join(flags)}]" if flags else ""
-    return f"{t['id']} | {t.get('status')} | {t.get('priority')} | {t.get('type')} | {t.get('title')} | proj:{proj} | tags:{tags} | due:{due}{flag_str}"
+    plane = f" | plane:{t['plane_number']}" if t.get("plane_number") else ""
+    return f"{t['id']} | {t.get('status')} | {t.get('priority')} | {t.get('type')} | {t.get('title')} | proj:{proj} | tags:{tags} | due:{due}{flag_str}{plane}"
 
 
 def _stats_summary(tasks):
