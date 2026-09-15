@@ -266,19 +266,20 @@ def create_plane_issue(task):
         "estimate_point": None,
         "parent_id": None,
         "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
-        "assignee_ids": [assignee_id],
         "cycle_id": None,
         "module_ids": [],
         "start_date": task.get("discussed_from") or None,
         "target_date": task.get("due_date") or None,
     }
-    # v1 (PAT) uses "state" UUID directly and "labels"; cookie API uses "state_id" and "label_ids"
+    # v1 (PAT) uses "state"/"labels"/"assignees"; cookie API uses "state_id"/"label_ids"/"assignee_ids"
     if is_v1:
         payload["state"] = sid
         payload["labels"] = label_ids
+        payload["assignees"] = [assignee_id]
     else:
         payload["state_id"] = sid
         payload["label_ids"] = label_ids
+        payload["assignee_ids"] = [assignee_id]
 
     status, data, raw = plane_request(cfg, "POST", f"{wpp(cfg)}/issues/", payload)
     if status is None:
@@ -336,17 +337,18 @@ def push_plane_core_fields(cfg, task, issue_id):
         "name": task.get("title", "Untitled task")[:255],
         "description_html": desc_html,
         "priority": PLANE_PRIORITY_MAP.get(task.get("priority") or "P3", "none"),
-        "assignee_ids": [cfg.get("assignee_id")],
         "start_date": task.get("discussed_from") or None,
         "target_date": task.get("due_date") or None,
     }
-    # v1 (PAT) uses "state" UUID directly; legacy cookie API uses "state_id"
+    # v1 (PAT) uses "state"/"labels"/"assignees"; legacy cookie API uses "state_id"/"label_ids"/"assignee_ids"
     if is_pat:
         payload["state"] = sid
         payload["labels"] = label_ids
+        payload["assignees"] = [cfg.get("assignee_id")]
     else:
         payload["state_id"] = sid
         payload["label_ids"] = label_ids
+        payload["assignee_ids"] = [cfg.get("assignee_id")]
     status, data, raw = plane_request(cfg, "PATCH", f"{wpp(cfg)}/issues/{issue_id}/", payload)
     if status is None:
         return {"error": f"Could not reach Plane: {raw}"}
