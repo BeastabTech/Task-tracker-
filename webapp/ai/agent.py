@@ -19,7 +19,7 @@ from app.constants import PRIORITIES, STATUSES
 from app.models import is_closed, is_overdue, is_stale
 
 from .client import OllamaError, call_ollama
-from .context import build_persona_block, build_voice_block, wrap_task_context
+from .context import build_persona_block, build_task_context, build_voice_block, wrap_task_context
 from .parser import strip_think
 
 MAX_INDEX = 120
@@ -105,22 +105,29 @@ AGENT_INSTRUCTIONS = (
     "explain the ACTION block, and put nothing after it."
 )
 
-_ACTION_RE = re.compile(r"-{2,3}\s*ACTION\s*-{2,3}\s*(\{.*?\})\s*-{2,3}\s*END ACTION\s*-{2,3}", re.DOTALL | re.IGNORECASE)
+_ACTION_RE = re.compile(r"-{0,3}\s*ACTION\s*-{0,3}\s*(\{.*?\})\s*-{0,3}\s*END ACTION\s*-{0,3}", re.DOTALL | re.IGNORECASE)
 
 
 def _find_task(tasks, task_id):
     return next((t for t in tasks if t.get("id") == task_id and not t.get("archived_at")), None)
 
 
-def validate_action(action, tasks):
+def validate_action(action, tasks, forced_task_id=None):
     """Whitelist + shape-check a model-proposed action against real task ids and allowed
-    values. Returns a normalized {name, args, label} dict, or None if it doesn't hold up."""
+    values. Returns a normalized {name, args, label} dict, or None if it doesn't hold up.
+
+    forced_task_id: when the caller already knows which single task is in scope (per-task
+    Ask AI), override whatever task_id the model guessed — the small local model isn't
+    reliable at echoing back an opaque id it was shown once, but there's no ambiguity to
+    resolve here since only one task is in play."""
     if not isinstance(action, dict):
         return None
     name = action.get("name")
     args = action.get("args")
     if not isinstance(args, dict):
         return None
+    if forced_task_id and name in ("update_status", "update_priority", "add_comment", "archive_task"):
+        args = {**args, "task_id": forced_task_id}
 
     if name == "update_status":
         task = _find_task(tasks, args.get("task_id"))
@@ -171,29 +178,35 @@ def validate_action(action, tasks):
     return None
 
 
-def parse_agent_reply(text, tasks):
+def parse_agent_reply(text, tasks, forced_task_id=None):
     """Split a raw model reply into (clean_answer_text, validated_action_or_None)."""
     match = _ACTION_RE.search(text or "")
     if not match:
         return (text or "").strip(), None
     action = None
     try:
-        action = validate_action(json.loads(match.group(1)), tasks)
+        action = validate_action(json.loads(match.group(1)), tasks, forced_task_id=forced_task_id)
     except (json.JSONDecodeError, TypeError):
         action = None
     clean = (text[:match.start()] + text[match.end():]).strip()
     return clean, action
 
 
-def ai_ask(question, tasks, model=None):
+def ai_ask(question, tasks, model=None, task_id=None):
     question = (question or "").strip()
     if not question:
         return {"error": "question is required"}
     model = model or OLLAMA_MODEL
 
-    chosen = gather_relevant_tasks(question, tasks)
-    index_text = "\n".join(_compact_line(t) for t in chosen) if chosen else "(no open tasks)"
-    data_block = f"{_stats_summary(tasks)}\n\n{index_text}"
+    if task_id:
+        focus_task = _find_task(tasks, task_id)
+        if not focus_task:
+            return {"error": f"task '{task_id}' not found"}
+        data_block = build_task_context(focus_task)
+    else:
+        chosen = gather_relevant_tasks(question, tasks)
+        index_text = "\n".join(_compact_line(t) for t in chosen) if chosen else "(no open tasks)"
+        data_block = f"{_stats_summary(tasks)}\n\n{index_text}"
 
     parts = [build_persona_block()]
     voice = build_voice_block(tasks)
@@ -210,5 +223,5 @@ def ai_ask(question, tasks, model=None):
         return {"error": str(e)}
 
     text = strip_think(raw)
-    answer, action = parse_agent_reply(text, tasks)
+    answer, action = parse_agent_reply(text, tasks, forced_task_id=task_id)
     return {"ok": True, "answer": answer, "action": action, "model": model}

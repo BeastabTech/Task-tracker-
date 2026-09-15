@@ -4,11 +4,11 @@ import { showToast } from "./notifications.js";
 import { patch, noticePlaneSyncResult } from "./api.js";
 import { render, populateProjectFilter, populateTagFilter, populateDatalists } from "./views.js";
 
-async function askAi(question) {
+async function askAi(question, taskId) {
   const res = await fetch("/api/ai-ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, task_id: taskId }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -164,5 +164,102 @@ export function wireAskAI() {
   actionDiscard.addEventListener("click", () => {
     actionCard.hidden = true;
     pendingAction = null;
+  });
+}
+
+export function wireTaskAsk(card, t) {
+  const btn = card.querySelector(".task-ask-btn");
+  const panel = card.querySelector(".task-ask-panel");
+  if (!btn || !panel) return;
+
+  btn.addEventListener("click", e => {
+    e.stopPropagation();
+    if (!panel.hidden) { panel.hidden = true; return; }
+
+    panel.innerHTML = `
+      <form class="task-ask-form">
+        <input type="text" class="task-ask-input" placeholder="e.g. what's the status? what's blocking this?">
+        <button type="submit" class="btn ghost task-ask-submit">Ask</button>
+      </form>
+      <div class="task-ask-result" hidden>
+        <p class="task-ask-answer"></p>
+        <div class="task-ask-action-card" hidden>
+          <span class="task-ask-action-label"></span>
+          <div class="ai-result-buttons">
+            <button type="button" class="btn task-ask-action-apply">Apply</button>
+            <button type="button" class="btn ghost task-ask-action-discard">Discard</button>
+          </div>
+        </div>
+      </div>
+    `;
+    panel.hidden = false;
+
+    const form = panel.querySelector(".task-ask-form");
+    const input = panel.querySelector(".task-ask-input");
+    const submitBtn = panel.querySelector(".task-ask-submit");
+    const resultWrap = panel.querySelector(".task-ask-result");
+    const answerEl = panel.querySelector(".task-ask-answer");
+    const actionCard = panel.querySelector(".task-ask-action-card");
+    const actionLabel = panel.querySelector(".task-ask-action-label");
+    const actionApply = panel.querySelector(".task-ask-action-apply");
+    const actionDiscard = panel.querySelector(".task-ask-action-discard");
+    let pendingAction = null;
+
+    input.focus();
+    input.addEventListener("click", ev => ev.stopPropagation());
+    form.addEventListener("click", ev => ev.stopPropagation());
+
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const question = input.value.trim();
+      if (!question) return;
+      pendingAction = null;
+      actionCard.hidden = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = "…";
+      resultWrap.hidden = false;
+      answerEl.textContent = "";
+      try {
+        const data = await askAi(question, t.id);
+        if (data.action) {
+          pendingAction = data.action;
+          actionLabel.textContent = data.action.label;
+          actionCard.hidden = false;
+          answerEl.textContent = data.answer || "";
+          answerEl.hidden = !data.answer;
+        } else {
+          answerEl.hidden = false;
+          answerEl.textContent = data.answer || "(no answer)";
+        }
+      } catch (err) {
+        showToast("AI error: " + err.message);
+      }
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Ask";
+    });
+
+    actionApply.addEventListener("click", async e2 => {
+      e2.stopPropagation();
+      if (!pendingAction) return;
+      actionApply.disabled = true;
+      actionApply.textContent = "Applying…";
+      const ok = await applyAction(pendingAction);
+      actionApply.disabled = false;
+      actionApply.textContent = "Apply";
+      if (ok) {
+        showToast("Applied ✓");
+        actionCard.hidden = true;
+        pendingAction = null;
+      } else {
+        showToast("Action failed");
+      }
+    });
+
+    actionDiscard.addEventListener("click", e2 => {
+      e2.stopPropagation();
+      actionCard.hidden = true;
+      pendingAction = null;
+    });
   });
 }

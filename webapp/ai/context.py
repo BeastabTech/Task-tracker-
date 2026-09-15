@@ -12,6 +12,7 @@ _ACTIVITY_LIMIT = 6
 def build_task_context(task):
     """Return a plain-text structured summary of a task for use as AI input."""
     lines = [
+        f"ID: {task.get('id')}",
         f"Title: {task.get('title') or 'Untitled task'}",
         f"Status: {task.get('status') or 'To Do'}",
         f"Priority: {task.get('priority') or 'P3'}",
@@ -46,6 +47,10 @@ def build_task_context(task):
 
     if task.get("notes"):
         lines.append(f"Notes: {task['notes']}")
+    criteria = task.get("acceptance_criteria") or []
+    if criteria:
+        lines.append("Acceptance criteria:")
+        lines.extend(f"  - {c}" for c in criteria)
     if task.get("cancel_reason"):
         lines.append(f"Cancel reason: {task['cancel_reason']}")
 

@@ -57,4 +57,5 @@ export const state = {
   newTagVals: [],
   newWhoVals: [],
   newAttachVals: [],
+  newCriteriaVals: [],
 };

@@ -29,6 +29,7 @@ def build_new_task(tasks, body):
         "notes": body.get("notes", ""),
         "tags": as_list(body.get("tags")),
         "attachments": as_list(body.get("attachments")),
+        "acceptance_criteria": as_list(body.get("acceptance_criteria")),
         "discussed_from": clean_date(d_from) or today,
         "discussed_to": clean_date(d_to) or clean_date(d_from) or today,
         "start_date": clean_date(body.get("start_date")),
@@ -139,6 +140,8 @@ def apply_task_patch(t, body):
         t["discussed_with"] = as_list(body["discussed_with"])
     if "attachments" in body and isinstance(body["attachments"], list):
         t["attachments"] = body["attachments"]
+    if "acceptance_criteria" in body:
+        t["acceptance_criteria"] = as_list(body["acceptance_criteria"])
     if "priority" in body and body["priority"] in PRIORITIES:
         t["priority"] = body["priority"]
     if "type" in body and body["type"] in TYPES:

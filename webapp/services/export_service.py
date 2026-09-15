@@ -15,7 +15,7 @@ def build_export_xlsx(tasks):
     FONT = "Arial"
     headers = ["ID", "Type", "Title", "Status", "Priority", "Project(s)", "Tags",
                "Discussed With", "Discussed", "Start", "Due", "Done", "Closed",
-               "Notes", "Cancel Reason", "Updated"]
+               "Notes", "Acceptance Criteria", "Cancel Reason", "Updated"]
 
     header_fill = PatternFill("solid", fgColor="4D6D8C")
     header_font = Font(name=FONT, size=10, bold=True, color="FFFFFF")
@@ -49,24 +49,25 @@ def build_export_xlsx(tasks):
             t.get("priority") or "P3", ", ".join(t.get("project") or []), ", ".join(t.get("tags") or []),
             ", ".join(t.get("discussed_with") or []), discussed, t.get("start_date") or "",
             t.get("due_date") or "", t.get("done_at") or "", t.get("closed_at") or "",
-            t.get("notes", ""), t.get("cancel_reason", ""), t.get("updated_at", ""),
+            t.get("notes", ""), "; ".join(t.get("acceptance_criteria") or []),
+            t.get("cancel_reason", ""), t.get("updated_at", ""),
         ]
         for c, v in enumerate(values, start=1):
             cell = ws.cell(row=row, column=c, value=v)
             cell.font = Font(name=FONT, size=10)
-            cell.alignment = Alignment(vertical="top", wrap_text=(c in (3, 14)))
+            cell.alignment = Alignment(vertical="top", wrap_text=(c in (3, 14, 15)))
             cell.border = border
         status_cell = ws.cell(row=row, column=4)
         status_cell.fill = status_fill.get(t.get("status", ""), PatternFill())
         row += 1
 
     last_row = max(row - 1, 1)
-    widths = {1: 7, 2: 9, 3: 52, 4: 12, 5: 9, 6: 24, 7: 16, 8: 20, 9: 18, 10: 11, 11: 11, 12: 11, 13: 11, 14: 46, 15: 24, 16: 11}
+    widths = {1: 7, 2: 9, 3: 52, 4: 12, 5: 9, 6: 24, 7: 16, 8: 20, 9: 18, 10: 11, 11: 11, 12: 11, 13: 11, 14: 46, 15: 40, 16: 24, 17: 11}
     for c, w in widths.items():
         ws.column_dimensions[get_column_letter(c)].width = w
 
     if last_row >= 1:
-        table = Table(displayName="ExportedTasks", ref=f"A1:P{last_row}")
+        table = Table(displayName="ExportedTasks", ref=f"A1:Q{last_row}")
         table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
         ws.add_table(table)
 

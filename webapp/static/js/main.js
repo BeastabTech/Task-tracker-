@@ -183,6 +183,7 @@ document.getElementById("addForm").addEventListener("submit", async e => {
     due_date: parsed.due_date || document.getElementById("newDueDate").value || null,
     notes: document.getElementById("newNotes").value,
     cancel_reason: document.getElementById("newCancelReason").value,
+    acceptance_criteria: state.newCriteriaVals,
   };
   const res = await fetch(API, {
     method: "POST",
@@ -195,7 +196,7 @@ document.getElementById("addForm").addEventListener("submit", async e => {
   document.getElementById("addForm").reset();
   document.getElementById("moreOptions").classList.remove("open");
   document.getElementById("aiFillPanel").hidden = true;
-  state.newProjectVals = []; state.newTagVals = []; state.newWhoVals = []; state.newAttachVals = [];
+  state.newProjectVals = []; state.newTagVals = []; state.newWhoVals = []; state.newAttachVals = []; state.newCriteriaVals = [];
   initAddFormChipFields();
   document.getElementById("quickPreview").innerHTML = "";
   populateProjectFilter();

@@ -107,12 +107,8 @@ export function wireAiFill() {
       notesEl.value = lastSuggestion.description;
     }
     if (checked.has("acceptance_criteria")) {
-      // #newNotes is a single-line <input>, which silently strips \n on assignment —
-      // join with a visible separator instead of newlines so it stays readable.
-      const notesEl = document.getElementById("newNotes");
-      const bullets = lastSuggestion.acceptance_criteria.join(" · ");
-      const base = checked.has("description") ? lastSuggestion.description : notesEl.value.trim();
-      notesEl.value = base ? `${base}  Acceptance criteria: ${bullets}` : `Acceptance criteria: ${bullets}`;
+      lastSuggestion.acceptance_criteria.forEach(c => { if (!state.newCriteriaVals.includes(c)) state.newCriteriaVals.push(c); });
+      renderLocalChipField("newCriteriaField", "newCriteriaInput", state.newCriteriaVals);
     }
     if (checked.has("priority")) document.getElementById("newPriority").value = lastSuggestion.priority;
     if (checked.has("type")) document.getElementById("newType").value = lastSuggestion.type;

@@ -13,6 +13,7 @@ def normalize_task(task):
     task["tags"] = as_list(task.get("tags"))
     task["discussed_with"] = as_list(task.get("discussed_with"))
     task["attachments"] = as_list(task.get("attachments"))
+    task["acceptance_criteria"] = as_list(task.get("acceptance_criteria"))
     task["status"] = task.get("status") if task.get("status") in STATUSES else "To Do"
     task["priority"] = task.get("priority") if task.get("priority") in PRIORITIES else "P3"
     task["type"] = task.get("type") if task.get("type") in TYPES else "Task"

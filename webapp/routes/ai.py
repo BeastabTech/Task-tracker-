@@ -22,7 +22,7 @@ def post_ai_generate(handler, m):
 def post_ai_ask(handler, m):
     body = handler._read_body()
     tasks = load_tasks()["tasks"]
-    result = ai_ask(body.get("question"), tasks)
+    result = ai_ask(body.get("question"), tasks, task_id=body.get("task_id"))
     if "error" in result:
         return handler._send_json(result, status=502)
     handler._send_json(result)

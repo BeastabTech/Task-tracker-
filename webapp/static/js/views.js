@@ -15,6 +15,7 @@ import {
   wireAddComment, wireHistoryToggle,
 } from "./tasks.js";
 import { wireAiAssist } from "./ai.js";
+import { wireTaskAsk } from "./agent.js";
 import { wirePlaneButton } from "./plane.js";
 import { refreshUpdatePreview } from "./updates.js";
 
@@ -718,6 +719,12 @@ export function renderFilterCounts(){
   });
 }
 
+export function criteriaListHtml(t){
+  const items = t.acceptance_criteria || [];
+  if (!items.length) return "";
+  return `<ul class="criteria-list">${items.map(c => `<li>${escapeHtml(c)}</li>`).join("")}</ul>`;
+}
+
 export function chipFieldHtml(field, values, dlId, chipClass){
   const chips = values.map((v,i) => `<span class="chip-val ${chipClass||""}" data-i="${i}">${escapeHtml(v)}<span class="x">✕</span></span>`).join("");
   return `<div class="chip-field" data-field="${field}">${chips}<input type="text" class="chip-input" list="${dlId}" placeholder="+ add"></div>`;
@@ -756,6 +763,7 @@ export function initAddFormChipFields(){
   renderLocalChipField("newTagsField", "newTagsInput", state.newTagVals);
   renderLocalChipField("newWhoField", "newWhoInput", state.newWhoVals);
   renderLocalChipField("newAttachField", "newAttachInput", state.newAttachVals);
+  renderLocalChipField("newCriteriaField", "newCriteriaInput", state.newCriteriaVals);
 }
 
 export function afterChipChange(field){
@@ -839,8 +847,10 @@ export function renderCardReadOnly(card, t, statusHtml){
     <div style="flex:1;min-width:0;">
       <div class="title-row">
         <span class="title-static">${escapeHtml(t.title)}</span>
+        <button type="button" class="ai-assist-btn task-ask-btn" title="Ask AI about this task">🤖</button>
         <button type="button" class="edit-btn">✎ Edit</button>
       </div>
+      <div class="task-ask-panel" hidden></div>
       <div class="meta">
         <span class="tag priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
         ${t.type === "Review" ? `<span class="tag type-review">👀 Review</span>` : ""}
@@ -856,6 +866,7 @@ export function renderCardReadOnly(card, t, statusHtml){
         ${t.archived_at ? `<span class="period">Archived ${fmtDate(t.archived_at)}</span>` : ""}
       </div>
       ${t.notes ? `<div class="notes-static">${escapeHtml(t.notes)}</div>` : ""}
+      ${criteriaListHtml(t)}
       ${t.status === "Cancelled" && t.cancel_reason ? `<div class="cancel-reason-static">Reason: ${escapeHtml(t.cancel_reason)}</div>` : ""}
       ${attachHtml}
       ${planeRowHtml(t)}
@@ -869,6 +880,7 @@ export function renderCardReadOnly(card, t, statusHtml){
   wirePlaneButton(card, t);
   wireAddComment(card, t);
   wireAddAttachment(card, t);
+  wireTaskAsk(card, t);
   card.querySelector(".edit-btn").addEventListener("click", () => {
     state.editingIds.add(t.id);
     render();
@@ -923,6 +935,10 @@ export function renderCardEditing(card, t, statusHtml){
         ${chipFieldHtml("discussed_with", t.discussed_with||[], "dl-who", "who-type")}
       </div>
       <div class="notes" contenteditable="true" spellcheck="false">${escapeHtml(t.notes||"")}</div>
+      <div class="field-row">
+        <span class="field-label">Acceptance criteria</span>
+        ${chipFieldHtml("acceptance_criteria", t.acceptance_criteria||[], "", "criteria-type")}
+      </div>
       <div class="attach-row">
         ${attachHtml}
         <button type="button" class="add-attach">📎 add attachment</button>
@@ -989,6 +1005,7 @@ export function renderCardEditing(card, t, statusHtml){
   wireChipField(card.querySelector('[data-field="project"]'), t, "project");
   wireChipField(card.querySelector('[data-field="tags"]'), t, "tags");
   wireChipField(card.querySelector('[data-field="discussed_with"]'), t, "discussed_with");
+  wireChipField(card.querySelector('[data-field="acceptance_criteria"]'), t, "acceptance_criteria");
 
   const notesEl = card.querySelector(".notes");
   notesEl.addEventListener("blur", async () => {
