@@ -794,6 +794,13 @@ _AI_PROMPTS = {
         "Summarize this task in 1 sentence for a standup. Direct, specific, no filler. "
         "Reply with ONLY the sentence.\n\nTask: {input}"
     ),
+    "comment_reframe": (
+        "You are writing a Plane issue comment for a software engineering team.\n\n"
+        "Task context:\n{input}\n\n"
+        "Rewrite the user's raw message as a clear, professional English update. "
+        "Be direct and specific — keep technical terms as-is. Max 4 sentences. "
+        "Reply with ONLY the rewritten comment, no preamble, no quotes."
+    ),
 }
 
 

@@ -1390,11 +1390,7 @@ function wireAddComment(card, t){
   const btn = card.querySelector(".add-comment");
   if (!btn) return;
   btn.addEventListener("click", async () => {
-    const text = await askTextarea({
-      title: "Add comment",
-      placeholder: "What's the update?",
-      confirmText: "Add comment",
-    });
+    const text = await askCommentWithAI(t);
     if (!text) return;
     const res = await fetch(`${API}/${t.id}/comments`, {
       method: "POST",
@@ -1670,19 +1666,19 @@ async function moveTaskStatus(t, newStatus){
   if (!newStatus || newStatus === t.status) return t;
   const body = { status: newStatus };
   if (newStatus === "Cancelled") {
-    const reason = await askTextarea({
+    const reason = await askCommentWithAI(t, {
       title: "Cancel task",
-      placeholder: "Reason (optional)",
-      initial: t.cancel_reason || "",
+      placeholder: "Reason for cancelling? (Hinglish is fine)",
       confirmText: "Move to Cancelled",
+      initial: t.cancel_reason || "",
     });
     if (reason === null) return null;
     body.cancel_reason = reason;
     body.status_note = reason;
   } else {
-    const note = await askTextarea({
-      title: `Update for moving to ${newStatus}`,
-      placeholder: "What's the update? (optional)",
+    const note = await askCommentWithAI(t, {
+      title: `Move to ${newStatus}`,
+      placeholder: "What's the update? (optional, Hinglish is fine)",
       confirmText: `Move to ${newStatus}`,
     });
     if (note === null) return null;
@@ -1835,6 +1831,81 @@ function askTextarea({ title, placeholder = "", helpText = "", confirmText = "Sa
     const ta = overlay.querySelector(".modal-textarea");
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
+  });
+}
+
+function askCommentWithAI(task, { title = "Add comment", placeholder = "What's the update? (Hinglish is fine)", confirmText = "Add comment", initial = "" } = {}){
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-backdrop";
+    overlay.innerHTML = `
+      <form class="text-modal">
+        <h2>${escapeHtml(title)}</h2>
+        <textarea class="modal-textarea" placeholder="${escapeHtml(placeholder)}" rows="5">${escapeHtml(initial)}</textarea>
+        <div class="modal-ai-row">
+          <button type="button" class="btn ghost ai-reframe-btn">✨ Reframe with AI</button>
+          <span class="ai-reframe-status"></span>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost modal-cancel">Cancel</button>
+          <button type="submit" class="btn">${escapeHtml(confirmText)}</button>
+        </div>
+      </form>
+    `;
+    const close = value => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onKey = e => { if (e.key === "Escape") close(null); };
+    overlay.addEventListener("click", e => { if (e.target === overlay) close(null); });
+    overlay.querySelector(".modal-cancel").addEventListener("click", () => close(null));
+    overlay.querySelector("form").addEventListener("submit", e => {
+      e.preventDefault();
+      close(overlay.querySelector(".modal-textarea").value.trim());
+    });
+
+    const reframeBtn = overlay.querySelector(".ai-reframe-btn");
+    const statusEl = overlay.querySelector(".ai-reframe-status");
+    const ta = overlay.querySelector(".modal-textarea");
+
+    reframeBtn.addEventListener("click", async () => {
+      const raw = ta.value.trim();
+      if (!raw) { statusEl.textContent = "Type something first"; return; }
+      reframeBtn.disabled = true;
+      statusEl.textContent = "Rewriting…";
+      const ctx = [
+        `Title: ${task.title || ""}`,
+        `Status: ${task.status || ""}`,
+        `Priority: ${task.priority || "P3"}`,
+        task.project?.length ? `Project: ${task.project.join(", ")}` : "",
+        task.tags?.length ? `Tags: ${task.tags.join(", ")}` : "",
+        task.notes ? `Notes: ${task.notes}` : "",
+        `\nUser's message:\n${raw}`,
+      ].filter(Boolean).join("\n");
+      try {
+        const res = await fetch("/api/ai-generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "comment_reframe", input: ctx }),
+        });
+        const data = await res.json();
+        if (data.result) {
+          ta.value = data.result;
+          statusEl.textContent = "✓ Reframed";
+        } else {
+          statusEl.textContent = data.error ? `AI error: ${data.error}` : "No result";
+        }
+      } catch (e) {
+        statusEl.textContent = "AI unavailable";
+      }
+      reframeBtn.disabled = false;
+      ta.focus();
+    });
+
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    ta.focus();
   });
 }
 
