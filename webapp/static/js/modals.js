@@ -115,6 +115,17 @@ export function askCommentWithAI(task, { title = "Add comment", placeholder = "W
           <button type="button" class="btn ghost ai-reframe-btn">✨ Reframe with AI</button>
           <span class="ai-reframe-status"></span>
         </div>
+        <div class="ai-reframe-preview" hidden>
+          <p class="ai-reframe-preview-text"></p>
+          <div class="ai-refine-row">
+            <input type="text" class="ai-refine-input" placeholder="Optional: tell it what to change, e.g. &quot;more formal&quot;">
+            <button type="button" class="btn ghost ai-reframe-regenerate">Regenerate</button>
+          </div>
+          <div class="ai-result-buttons">
+            <button type="button" class="btn ai-reframe-accept">Accept</button>
+            <button type="button" class="btn ghost ai-reframe-reject">Reject</button>
+          </div>
+        </div>
         <div class="modal-actions">
           <button type="button" class="btn ghost modal-cancel">Cancel</button>
           <button type="submit" class="btn">${escapeHtml(confirmText)}</button>
@@ -137,31 +148,33 @@ export function askCommentWithAI(task, { title = "Add comment", placeholder = "W
     const reframeBtn = overlay.querySelector(".ai-reframe-btn");
     const statusEl = overlay.querySelector(".ai-reframe-status");
     const ta = overlay.querySelector(".modal-textarea");
+    const preview = overlay.querySelector(".ai-reframe-preview");
+    const previewText = overlay.querySelector(".ai-reframe-preview-text");
+    const refineInput = overlay.querySelector(".ai-refine-input");
+    const regenerateBtn = overlay.querySelector(".ai-reframe-regenerate");
+    let lastResult = null;
+    let sourceText = "";
 
-    reframeBtn.addEventListener("click", async () => {
-      const raw = ta.value.trim();
-      if (!raw) { statusEl.textContent = "Type something first"; return; }
+    async function reframe(feedback) {
       reframeBtn.disabled = true;
+      regenerateBtn.disabled = true;
       statusEl.textContent = "Rewriting…";
-      const ctx = [
-        `Title: ${task.title || ""}`,
-        `Status: ${task.status || ""}`,
-        `Priority: ${task.priority || "P3"}`,
-        task.project?.length ? `Project: ${task.project.join(", ")}` : "",
-        task.tags?.length ? `Tags: ${task.tags.join(", ")}` : "",
-        task.notes ? `Notes: ${task.notes}` : "",
-        `\nUser's message:\n${raw}`,
-      ].filter(Boolean).join("\n");
       try {
         const res = await fetch("/api/ai-generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "comment_reframe", input: ctx }),
+          body: JSON.stringify({
+            mode: "comment_reframe", task_id: task.id, input: sourceText,
+            previous_result: lastResult, feedback,
+          }),
         });
         const data = await res.json();
         if (data.result) {
-          ta.value = data.result;
-          statusEl.textContent = "✓ Reframed";
+          lastResult = data.result;
+          previewText.textContent = lastResult;
+          preview.hidden = false;
+          refineInput.value = "";
+          statusEl.textContent = "";
         } else {
           statusEl.textContent = data.error ? `AI error: ${data.error}` : "No result";
         }
@@ -169,6 +182,31 @@ export function askCommentWithAI(task, { title = "Add comment", placeholder = "W
         statusEl.textContent = "AI unavailable";
       }
       reframeBtn.disabled = false;
+      regenerateBtn.disabled = false;
+    }
+
+    reframeBtn.addEventListener("click", () => {
+      const raw = ta.value.trim();
+      if (!raw) { statusEl.textContent = "Type something first"; return; }
+      sourceText = raw;
+      lastResult = null;
+      reframe();
+    });
+
+    regenerateBtn.addEventListener("click", () => reframe(refineInput.value.trim()));
+
+    overlay.querySelector(".ai-reframe-accept").addEventListener("click", () => {
+      if (!lastResult) return;
+      ta.value = lastResult;
+      preview.hidden = true;
+      statusEl.textContent = "✓ Reframed";
+      ta.focus();
+    });
+
+    overlay.querySelector(".ai-reframe-reject").addEventListener("click", () => {
+      preview.hidden = true;
+      lastResult = null;
+      statusEl.textContent = "";
       ta.focus();
     });
 

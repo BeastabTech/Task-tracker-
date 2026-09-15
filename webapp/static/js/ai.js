@@ -3,11 +3,11 @@ import { showToast } from "./notifications.js";
 import { patch } from "./api.js";
 import { render } from "./views.js";
 
-export async function aiGenerate(mode, inputText) {
+export async function aiGenerate(mode, inputText, previousResult, feedback) {
   const res = await fetch("/api/ai-generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, input: inputText }),
+    body: JSON.stringify({ mode, input: inputText, previous_result: previousResult, feedback }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -37,8 +37,14 @@ export function wireAiAssist(card, t) {
       </div>
       <div class="ai-result-area" style="display:none">
         <span class="ai-result-text"></span>
-        <button class="ai-apply-btn">Apply</button>
-        <button class="ai-discard-btn">Discard</button>
+        <div class="ai-refine-row">
+          <input type="text" class="ai-refine-input" placeholder="Optional: tell it what to change, e.g. &quot;shorter&quot;">
+          <button class="ai-regenerate-btn">Regenerate</button>
+        </div>
+        <div class="ai-result-buttons">
+          <button class="ai-apply-btn">Apply</button>
+          <button class="ai-discard-btn">Discard</button>
+        </div>
       </div>`;
     panel.style.display = "block";
 
@@ -51,41 +57,54 @@ export function wireAiAssist(card, t) {
         const inputText = mode === "title" ? currentTitle
           : mode === "labels" ? `${currentTitle}\n${currentNotes}`
           : `${currentTitle}\n${currentNotes || ""}`;
-        ab.textContent = "…";
-        ab.disabled = true;
-        try {
-          const result = await aiGenerate(mode, inputText);
-          const resultArea = panel.querySelector(".ai-result-area");
-          const resultText = panel.querySelector(".ai-result-text");
-          resultText.textContent = result;
-          resultArea.style.display = "flex";
-          panel.querySelector(".ai-apply-btn").onclick = async () => {
-            if (target === "title") {
-              titleEl.textContent = result;
-              t.title = result; t.updated_at = todayStr();
-              await patch(t.id, { title: result });
-            } else if (target === "notes") {
-              notesEl.textContent = result;
-              t.notes = result; t.updated_at = todayStr();
-              await patch(t.id, { notes: result });
-            } else if (target === "labels") {
-              const newLabels = result.split(",").map(s => s.trim()).filter(Boolean);
-              const existing = [...(t.tags || [])];
-              const merged = [...new Set([...existing, ...newLabels])];
-              t.tags = merged; t.updated_at = todayStr();
-              await patch(t.id, { tags: merged });
-              render();
-            }
-            panel.style.display = "none";
-            showToast("Applied ✓");
-          };
-          panel.querySelector(".ai-discard-btn").onclick = () => { resultArea.style.display = "none"; };
-        } catch (err) {
-          showToast("AI error: " + err.message);
+        const resultArea = panel.querySelector(".ai-result-area");
+        const resultText = panel.querySelector(".ai-result-text");
+        const refineInput = panel.querySelector(".ai-refine-input");
+        let result = null;
+
+        async function generate(feedback) {
+          ab.disabled = true;
+          const regenBtn = panel.querySelector(".ai-regenerate-btn");
+          if (feedback !== undefined) regenBtn.textContent = "…"; else ab.textContent = "…";
+          try {
+            result = await aiGenerate(mode, inputText, result, feedback);
+            resultText.textContent = result;
+            resultArea.style.display = "flex";
+            refineInput.value = "";
+          } catch (err) {
+            showToast("AI error: " + err.message);
+          }
+          ab.disabled = false;
+          regenBtn.textContent = "Regenerate";
+          ab.textContent = ab.dataset.mode === "title" ? "Improve title"
+            : ab.dataset.mode === "description" ? "Generate description" : "Suggest labels";
         }
-        ab.disabled = false;
-        ab.textContent = ab.dataset.mode === "title" ? "Improve title"
-          : ab.dataset.mode === "description" ? "Generate description" : "Suggest labels";
+
+        panel.querySelector(".ai-regenerate-btn").onclick = () => generate(refineInput.value.trim());
+        panel.querySelector(".ai-apply-btn").onclick = async () => {
+          if (!result) return;
+          if (target === "title") {
+            titleEl.textContent = result;
+            t.title = result; t.updated_at = todayStr();
+            await patch(t.id, { title: result });
+          } else if (target === "notes") {
+            notesEl.textContent = result;
+            t.notes = result; t.updated_at = todayStr();
+            await patch(t.id, { notes: result });
+          } else if (target === "labels") {
+            const newLabels = result.split(",").map(s => s.trim()).filter(Boolean);
+            const existing = [...(t.tags || [])];
+            const merged = [...new Set([...existing, ...newLabels])];
+            t.tags = merged; t.updated_at = todayStr();
+            await patch(t.id, { tags: merged });
+            render();
+          }
+          panel.style.display = "none";
+          showToast("Applied ✓");
+        };
+        panel.querySelector(".ai-discard-btn").onclick = () => { resultArea.style.display = "none"; result = null; };
+
+        await generate();
       });
     });
   });

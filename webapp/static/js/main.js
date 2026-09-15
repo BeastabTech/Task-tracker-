@@ -9,6 +9,8 @@ import {
   populateDatalists, initAddFormChipFields, renderUpdateModeSwitch, setActiveFilter, setViewMode,
 } from "./views.js";
 import { buildDailyUpdateText, refreshUpdatePreview } from "./updates.js";
+import { wireAskAI } from "./agent.js";
+import { wireAiFill } from "./aifill.js";
 
 /* ---------- theme ---------- */
 export function applyTheme(mode){
@@ -192,6 +194,7 @@ document.getElementById("addForm").addEventListener("submit", async e => {
   const alsoSendToPlane = document.getElementById("newSendToPlane").checked;
   document.getElementById("addForm").reset();
   document.getElementById("moreOptions").classList.remove("open");
+  document.getElementById("aiFillPanel").hidden = true;
   state.newProjectVals = []; state.newTagVals = []; state.newWhoVals = []; state.newAttachVals = [];
   initAddFormChipFields();
   document.getElementById("quickPreview").innerHTML = "";
@@ -262,5 +265,8 @@ window.addEventListener("scroll", () => {
 backToTopBtn.addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
+
+wireAskAI();
+wireAiFill();
 
 loadAll().then(maybeAutoSyncCycles);

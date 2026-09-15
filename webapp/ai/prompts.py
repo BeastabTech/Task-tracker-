@@ -285,4 +285,20 @@ AI_PROMPTS = {
         "Message:\n{input}"
     ),
 
+    "task_fill": (
+        "You are helping fill out a new engineering task from a rough draft. Given the draft "
+        "below, produce a complete version. Reply with ONLY a single JSON object, no markdown, "
+        "no code fences, no commentary, with exactly these keys: "
+        "title (string, max 8 words, action-oriented, no quotes/period), "
+        "description (string, 2-4 plain sentences, no markdown), "
+        "labels (array of 1-4 lowercase hyphenated labels), "
+        "priority (one of \"P1\", \"P2\", \"P3\", \"P4\"), "
+        "type (one of \"Task\", \"Review\"), "
+        "acceptance_criteria (array of 3-5 short, testable strings). "
+        "Do not invent requirements, systems, or details that are not implied by the draft. "
+        "If the draft already has a good title or field, keep its meaning and just clean it up "
+        "rather than replacing it with something unrelated.\n\n"
+        "Draft:\n{input}"
+    ),
+
 }

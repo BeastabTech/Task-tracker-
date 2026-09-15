@@ -10,11 +10,36 @@
 <div class="wrap">
 
   <div class="topbar">
+    <button class="theme-toggle" id="askAiBtn" title="Ask AI anything about your tasks">🤖 Ask AI</button>
     <button class="theme-toggle" id="planeSettingsBtn" title="Update Plane cookie">🔌 Plane</button>
     <button class="theme-toggle" id="cycleSyncBtn" title="Move open tasks stuck in an ended Plane cycle into the current one">🔁 Sync cycles</button>
     <button class="theme-toggle" id="bulkLabelSyncBtn" title="Push project/tag labels to ALL existing Plane issues">🏷️ Sync labels</button>
     <button class="theme-toggle" id="themeToggle">🌙 <span id="themeLabel">Dark</span></button>
   </div>
+
+  <section class="ask-ai-panel" id="askAiPanel">
+    <div class="ask-ai-head">
+      <div>
+        <p class="eyebrow">Ask AI</p>
+        <h2>Ask anything about your tasks</h2>
+      </div>
+      <button type="button" class="preview-close" id="closeAskAi" aria-label="Close">Close</button>
+    </div>
+    <form id="askAiForm" class="ask-ai-form">
+      <input type="text" id="askAiInput" placeholder="e.g. what's overdue this week? / mark T012 done / summarize the backend project">
+      <button type="submit" class="btn" id="askAiSubmit">Ask</button>
+    </form>
+    <div class="ask-ai-result" id="askAiResult" hidden>
+      <p class="ask-ai-answer" id="askAiAnswer"></p>
+      <div class="ask-action-card" id="askActionCard" hidden>
+        <span class="ask-action-label" id="askActionLabel"></span>
+        <div class="ask-action-buttons">
+          <button type="button" class="btn" id="askActionApply">Apply</button>
+          <button type="button" class="btn ghost" id="askActionDiscard">Discard</button>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <div class="hero">
     <div>
@@ -130,9 +155,25 @@
     <div class="quick-add">
       <input type="text" id="quickTitle" placeholder="Quick add: task p1 #project @tag due:tomorrow" required>
       <button type="button" class="btn secondary" id="moreOptionsBtn">More options</button>
+      <button type="button" class="btn ghost" id="aiFillBtn" title="Fill in description, labels, priority, type and acceptance criteria using AI">✨ Refine with AI</button>
       <button type="submit" class="btn">Add</button>
     </div>
     <div class="quick-preview" id="quickPreview"></div>
+    <div class="ai-fill-panel" id="aiFillPanel" hidden>
+      <div class="ai-fill-head">
+        <span class="ai-panel-label">✨ AI suggestions — review, then apply what you want</span>
+        <button type="button" class="ai-panel-close" id="aiFillClose" aria-label="Close">✕</button>
+      </div>
+      <div class="ai-fill-fields" id="aiFillFields"></div>
+      <div class="ai-fill-refine-row">
+        <input type="text" id="aiFillFeedback" placeholder="Optional: tell it what to change, e.g. \"make it shorter\" or \"mention the DB angle\"">
+        <button type="button" class="btn ghost" id="aiFillRegenerate">Regenerate</button>
+      </div>
+      <div class="ai-fill-actions">
+        <button type="button" class="btn" id="aiFillApply">Apply selected</button>
+        <button type="button" class="btn ghost" id="aiFillDiscard">Discard</button>
+      </div>
+    </div>
     <div class="add-form" id="moreOptions">
       <div class="row">
         <label class="date-label">Discussed from <input type="date" id="newDiscussedFrom"></label>
