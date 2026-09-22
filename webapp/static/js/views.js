@@ -4,7 +4,7 @@ import {
 } from "./state.js";
 import {
   slug, statusToneClass, todayStr, fmtDate, fmtRange, weekKeyAndLabel,
-  ageDays, isClosed, isOverdue, isStale, escapeHtml, clipText, taskMetaLine,
+  ageDays, isClosed, isOverdue, isStale, escapeHtml, clipText, taskMetaLine, isBugModuleTask,
 } from "./utils.js";
 import {
   activityStatus, activityTime, activityLabel, recentActivities, dailyEntries,
@@ -39,6 +39,7 @@ export function visibleTaskFilter(t, todayActivityIds){
   if (state.activeFilter === "high" && !["P1", "P2"].includes(t.priority || "P3")) return false;
   if (state.activeFilter === "stale" && !isStale(t)) return false;
   if (state.activeFilter === "review" && (t.type || "Task") !== "Review") return false;
+  if (state.activeFilter === "bugmodule" && !isBugModuleTask(t)) return false;
   if (state.activeProject && !(t.project || []).includes(state.activeProject)) return false;
   if (state.activeTag && !(t.tags || []).includes(state.activeTag)) return false;
   if (state.activeCycle && t.plane_cycle_name !== state.activeCycle) return false;
@@ -162,7 +163,7 @@ export function ensureHoverTooltip(){
 }
 export function taskTooltipHtml(t, extraLineHtml){
   const bits = [];
-  bits.push(`<div class="tt-title">${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</div>`);
+  bits.push(`<div class="tt-title">${t.type === "Review" ? "👀 " : ""}${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</div>`);
   bits.push(`<div class="tt-meta"><span class="row-status status-${slug(t.status)}">${escapeHtml(t.status)}</span><span class="tag priority priority-${t.priority||"P3"}">${escapeHtml(t.priority||"P3")}</span></div>`);
   if (extraLineHtml) bits.push(`<div class="tt-line tt-extra">${extraLineHtml}</div>`);
   if ((t.project||[]).length) bits.push(`<div class="tt-line"><strong>Project:</strong> ${escapeHtml(t.project.join(", "))}</div>`);
@@ -206,7 +207,7 @@ export function compactTaskRow(t, label){
   row.innerHTML = `
     <span class="row-status status-${slug(label || t.status)}">${escapeHtml(label || t.status)}</span>
     <span class="row-main">
-      <span class="row-title"><span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}</span> ${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</span>
+      <span class="row-title"><span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}</span> ${t.type === "Review" ? "👀 " : ""}${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</span>
       <span class="row-meta">${escapeHtml(taskMetaLine(t) || (t.updated_at ? `Updated ${fmtDate(t.updated_at)}` : ""))}</span>
     </span>
     <span class="row-priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
@@ -246,7 +247,7 @@ export function compactActivityRow(item){
     <span class="timeline-dot status-${slug(activityStatus(item.activity, item.task) || item.task.status)}"></span>
     <span class="row-main">
       <span class="row-title">${escapeHtml(activityLabel(item.activity))}</span>
-      <span class="row-meta">${escapeHtml(item.task.title)} · ${escapeHtml(activityTime(item.activity))}${item.activity.inferred ? " · inferred" : ""}</span>
+      <span class="row-meta">${isBugModuleTask(item.task) ? "🐛 " : ""}${escapeHtml(item.task.title)} · ${escapeHtml(activityTime(item.activity))}${item.activity.inferred ? " · inferred" : ""}</span>
     </span>
     ${item.task.plane_url ? `<span class="row-plane-link" title="View in Plane">↗</span>` : ""}
   `;
@@ -594,7 +595,7 @@ export function renderKanbanCard(t){
   card.draggable = true;
   const nextStatus = nextWorkflowStatus(t.status);
   card.innerHTML = `
-    <div class="kanban-title"><span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}${t.plane_number ? ` · ${escapeHtml(t.plane_number)}` : ""}</span> ${escapeHtml(t.title)}</div>
+    <div class="kanban-title"><span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}${t.plane_number ? ` · ${escapeHtml(t.plane_number)}` : ""}</span> ${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</div>
     <div class="kanban-meta">
       <span class="row-priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
       ${t.due_date ? `<span class="${isOverdue(t) ? "date-overdue" : ""}">Due ${fmtDate(t.due_date)}</span>` : ""}
@@ -708,6 +709,7 @@ export function renderFilterCounts(){
     stale: activeTasks.filter(isStale).length,
     archived: state.tasks.filter(t => t.archived_at).length,
     review: activeTasks.filter(t => (t.type || "Task") === "Review").length,
+    bugmodule: activeTasks.filter(isBugModuleTask).length,
   };
   state.statuses.forEach(status => {
     countMap[status] = activeTasks.filter(t => t.status === status).length;
@@ -847,7 +849,7 @@ export function renderCardReadOnly(card, t, statusHtml){
     <div style="flex:1;min-width:0;">
       <div class="title-row">
         <span class="task-id-badge" title="${t.plane_number ? `Plane: ${escapeHtml(t.plane_number)}` : "Not yet sent to Plane"}">${escapeHtml(t.id)}${t.plane_number ? ` · ${escapeHtml(t.plane_number)}` : ""}</span>
-        <span class="title-static">${escapeHtml(t.title)}</span>
+        <span class="title-static">${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</span>
         <button type="button" class="ai-assist-btn task-ask-btn" title="Ask AI about this task">🤖</button>
         <button type="button" class="edit-btn">✎ Edit</button>
       </div>
@@ -1041,9 +1043,15 @@ export function planeRowHtml(t){
           ? `<a href="${escapeHtml(t.plane_cycle_url)}" target="_blank" rel="noopener" class="plane-cycle-tag" title="Open this cycle in Plane">🔁 ${escapeHtml(t.plane_cycle_name)}</a>`
           : `<span class="plane-cycle-tag" title="Plane cycle this was in when first sent">🔁 ${escapeHtml(t.plane_cycle_name)}</span>`)
       : "";
+    const moduleHtml = t.plane_module_name
+      ? (t.plane_module_url
+          ? `<a href="${escapeHtml(t.plane_module_url)}" target="_blank" rel="noopener" class="plane-module-tag" title="Open this module in Plane">🧩 ${escapeHtml(t.plane_module_name)}</a>`
+          : `<span class="plane-module-tag" title="Plane module this issue is in">🧩 ${escapeHtml(t.plane_module_name)}</span>`)
+      : "";
     return `<div class="plane-row">
       <a href="${escapeHtml(t.plane_url)}" target="_blank" rel="noopener" class="plane-link">↗ View in Plane</a>
       ${cycleHtml}
+      ${moduleHtml}
       <button type="button" class="plane-btn plane-update-btn" title="Push this task's current status/priority/dates/notes to Plane">🔄 Update in Plane</button>
     </div>`;
   }

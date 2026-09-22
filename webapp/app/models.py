@@ -35,6 +35,9 @@ def normalize_task(task):
     task["plane_cycle_id"] = task.get("plane_cycle_id") or None
     task["plane_cycle_name"] = task.get("plane_cycle_name") or None
     task["plane_cycle_url"] = task.get("plane_cycle_url") or None
+    task["plane_module_id"] = task.get("plane_module_id") or None
+    task["plane_module_name"] = task.get("plane_module_name") or None
+    task["plane_module_url"] = task.get("plane_module_url") or None
     if not isinstance(task.get("activity_history"), list):
         task["activity_history"] = []
     if not task["activity_history"]:

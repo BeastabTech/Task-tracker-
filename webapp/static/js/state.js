@@ -16,6 +16,7 @@ export const FILTER_LABELS = {
   stale: "Stale tasks",
   archived: "Archived",
   review: "Reviews",
+  bugmodule: "Bug / Incident tasks",
 };
 export const CHIP_LABELS = {
   all: "All",
@@ -25,6 +26,7 @@ export const CHIP_LABELS = {
   stale: "Stale",
   archived: "Archived",
   review: "Reviews",
+  bugmodule: "🐛 Bugs",
 };
 
 /* Single shared mutable-state object — every module imports `state` and reads/writes its

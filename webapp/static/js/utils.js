@@ -98,6 +98,10 @@ export function quickPreviewHtml(parsed){
   if (parsed.start_date) chips.push(`Start ${fmtDate(parsed.start_date)}`);
   return chips.map(c => `<span>${escapeHtml(c)}</span>`).join("");
 }
+export function isBugModuleTask(t){
+  const tags = t.tags || [];
+  return tags.includes("Slack Bug") || (tags.includes("Bug") && tags.includes("Incident"));
+}
 export function taskMetaLine(t){
   const bits = [];
   if ((t.project || []).length) bits.push((t.project || []).slice(0, 2).join(", "));

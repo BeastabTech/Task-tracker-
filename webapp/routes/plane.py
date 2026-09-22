@@ -4,6 +4,7 @@ from app.models import normalize_task
 from plane.config import extract_plane_cookie, load_plane_config, save_plane_config
 from plane.labels import refresh_plane_labels
 from plane.sync import (
+    backfill_bug_module,
     bulk_update_plane_issues,
     create_plane_issue,
     discover_plane_setup,
@@ -77,6 +78,9 @@ def send_to_plane(handler, m):
     found["plane_cycle_id"] = result.get("plane_cycle_id")
     found["plane_cycle_name"] = result.get("plane_cycle_name")
     found["plane_cycle_url"] = result.get("plane_cycle_url")
+    found["plane_module_id"] = result.get("plane_module_id")
+    found["plane_module_name"] = result.get("plane_module_name")
+    found["plane_module_url"] = result.get("plane_module_url")
     found["updated_at"] = today_local()
     found["updated_ts"] = iso_now()
     normalize_task(found)
@@ -100,6 +104,14 @@ def send_plane_update(handler, m):
 @route("POST", r"^/api/plane-cycle-rollover$")
 def plane_cycle_rollover(handler, m):
     result = roll_open_tasks_to_current_cycle()
+    if "error" in result:
+        return handler._send_json(result, status=502)
+    handler._send_json(result)
+
+
+@route("POST", r"^/api/plane-module-backfill$")
+def plane_module_backfill(handler, m):
+    result = backfill_bug_module()
     if "error" in result:
         return handler._send_json(result, status=502)
     handler._send_json(result)

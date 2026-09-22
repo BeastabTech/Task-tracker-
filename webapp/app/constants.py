@@ -35,6 +35,16 @@ PLANE_GROUP_TO_STATUS = {
 
 PLANE_ACTIVE_WORK_STATUSES = {"In Progress", "In Review", "Pending"}
 
+# Plane module every Slack-alert-driven bug/incident task should sit in (see TKT-1608, which
+# this convention was copied from). Matched by name via the Plane API, not a hardcoded id, since
+# module ids differ per Plane project/workspace.
+PLANE_BUG_MODULE_NAME = "slack bug / incident"
+
+
+def is_slack_bug_incident_task(tags):
+    tags = tags or []
+    return "Slack Bug" in tags or ("Bug" in tags and "Incident" in tags)
+
 LABEL_COLORS = [
     "#F87171", "#FB923C", "#FBBF24", "#A3E635", "#34D399",
     "#22D3EE", "#60A5FA", "#A78BFA", "#F472B6", "#94A3B8",

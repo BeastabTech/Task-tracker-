@@ -2,7 +2,14 @@ import json
 import time
 
 from app.config import PLANE_HOST
-from app.constants import PLANE_ACTIVE_WORK_STATUSES, PLANE_GROUP_TO_STATUS, PLANE_PRIORITY_MAP, STATUSES
+from app.constants import (
+    PLANE_ACTIVE_WORK_STATUSES,
+    PLANE_BUG_MODULE_NAME,
+    PLANE_GROUP_TO_STATUS,
+    PLANE_PRIORITY_MAP,
+    STATUSES,
+    is_slack_bug_incident_task,
+)
 from app.storage import load_tasks, save_tasks
 from app.utils import escape_html_py
 
@@ -157,6 +164,157 @@ def roll_open_tasks_to_current_cycle():
     if moved:
         save_tasks(data)
     return {"ok": True, "cycle_name": active_cycle["name"], "moved": moved, "failed": failed}
+
+
+def find_plane_module_by_name(cfg, name):
+    """Looks up a Plane module by name (case-insensitive) in this project. Returns
+    {"id":..., "name":...} or None. Not cached like labels — this only runs on the
+    manual backfill button, not on any hot path."""
+    status, data, _ = plane_request(cfg, "GET", f"{wpp(cfg)}/modules/")
+    if status != 200:
+        return None
+    modules = data if isinstance(data, list) else (data.get("results") if isinstance(data, dict) else [])
+    target = name.strip().lower()
+    for mod in modules or []:
+        if (mod.get("name") or "").strip().lower() == target:
+            return {"id": mod["id"], "name": mod["name"]}
+    return None
+
+
+def assign_module_to_issue(cfg, issue_id, module_id):
+    """Attaches a Plane module to an issue — same endpoint Plane's own web UI uses
+    (POST .../issues/{id}/modules/ with {"modules":[...], "removed_modules":[]}).
+    This endpoint 404s on the public v1/PAT API - it only exists on the cookie-session
+    API, so force_cookie=True regardless of whether a PAT is configured."""
+    status, _, raw = plane_request(
+        cfg, "POST", f"{wpp(cfg)}/issues/{issue_id}/modules/",
+        {"modules": [module_id], "removed_modules": []},
+        force_cookie=True,
+    )
+    if status is None or status >= 300:
+        return {"error": f"Plane API {status}: {(raw or '')[:200]}"}
+    return {"ok": True}
+
+
+def remove_module_from_issue(cfg, issue_id, module_id):
+    """Detaches a Plane module from an issue — same endpoint as assign_module_to_issue,
+    just with modules/removed_modules swapped. Cookie-session API only, same as assign."""
+    status, _, raw = plane_request(
+        cfg, "POST", f"{wpp(cfg)}/issues/{issue_id}/modules/",
+        {"modules": [], "removed_modules": [module_id]},
+        force_cookie=True,
+    )
+    if status is None or status >= 300:
+        return {"error": f"Plane API {status}: {(raw or '')[:200]}"}
+    return {"ok": True}
+
+
+def sync_module_membership(cfg, task):
+    """Keeps a linked task's Plane module membership in step with its current tags, every time
+    it's touched (called from sync_plane_on_activity). If it now qualifies as a Slack Bug/
+    Incident task but isn't in the module yet, adds it; if it no longer qualifies but is still
+    in the module (tags were edited to remove "Slack Bug"/"Bug"+"Incident"), removes it.
+    Mutates task's plane_module_* fields in place. Never raises."""
+    issue_id = task.get("plane_issue_id")
+    if not issue_id:
+        return False
+    should_be_in = is_slack_bug_incident_task(task.get("tags"))
+    currently_in = bool(task.get("plane_module_id"))
+    if should_be_in == currently_in:
+        return False
+
+    try:
+        if should_be_in:
+            module = find_plane_module_by_name(cfg, PLANE_BUG_MODULE_NAME)
+            if not module:
+                return False
+            result = assign_module_to_issue(cfg, issue_id, module["id"])
+            if not result.get("ok"):
+                return False
+            workspace, project_id = cfg.get("workspace"), cfg.get("project_id")
+            task["plane_module_id"] = module["id"]
+            task["plane_module_name"] = module["name"]
+            task["plane_module_url"] = f"{PLANE_HOST}/{workspace}/projects/{project_id}/modules/{module['id']}/"
+        else:
+            module_id = task.get("plane_module_id")
+            result = remove_module_from_issue(cfg, issue_id, module_id)
+            if not result.get("ok"):
+                return False
+            task["plane_module_id"] = None
+            task["plane_module_name"] = None
+            task["plane_module_url"] = None
+        return True
+    except Exception:
+        return False
+
+
+def sync_task_cycle(cfg, task):
+    """Keeps a linked, still-open task in Plane's current cycle, every time it's touched (called
+    from sync_plane_on_activity) — the per-task counterpart to roll_open_tasks_to_current_cycle's
+    once-a-day sweep. Done/Cancelled tasks are left wherever they already are. Mutates task's
+    plane_cycle_* fields in place. Never raises."""
+    issue_id = task.get("plane_issue_id")
+    if not issue_id or task.get("status") in ("Done", "Cancelled"):
+        return False
+    try:
+        active_cycle = get_active_plane_cycle(cfg)
+        if not active_cycle or task.get("plane_cycle_id") == active_cycle["id"]:
+            return False
+        status, _, _ = plane_request(
+            cfg, "POST", f"{wpp(cfg)}/cycles/{active_cycle['id']}/cycle-issues/", {"issues": [issue_id]},
+        )
+        if status is None or (status >= 300 and status != 400):
+            return False
+        workspace, project_id = cfg.get("workspace"), cfg.get("project_id")
+        task["plane_cycle_id"] = active_cycle["id"]
+        task["plane_cycle_name"] = active_cycle["name"]
+        task["plane_cycle_url"] = f"{PLANE_HOST}/{workspace}/projects/{project_id}/cycles/{active_cycle['id']}/"
+        return True
+    except Exception:
+        return False
+
+
+def backfill_bug_module():
+    """One-off/on-demand sweep (mirrors roll_open_tasks_to_current_cycle): every local task
+    tagged 'Slack Bug', or both 'Bug' and 'Incident', that's already linked to a Plane issue
+    but not yet in the "slack bug / incident" module, gets added to it — matching the
+    convention set by hand on TKT-1608. Tasks not yet linked to Plane (no plane_issue_id) are
+    skipped; link them via "Send to Plane" first."""
+    cfg = load_plane_config()
+    if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id"):
+        return {"error": "Plane is not configured yet."}
+
+    module = find_plane_module_by_name(cfg, PLANE_BUG_MODULE_NAME)
+    if not module:
+        return {"error": f'Plane module "{PLANE_BUG_MODULE_NAME}" not found in this project.'}
+
+    workspace = cfg.get("workspace")
+    project_id = cfg.get("project_id")
+    module_url = f"{PLANE_HOST}/{workspace}/projects/{project_id}/modules/{module['id']}/"
+
+    data = load_tasks()
+    updated, failed, skipped = [], [], []
+    for t in data["tasks"]:
+        if not is_slack_bug_incident_task(t.get("tags")):
+            continue
+        issue_id = t.get("plane_issue_id")
+        if not issue_id:
+            skipped.append(t["id"])
+            continue
+        if t.get("plane_module_id") == module["id"]:
+            continue
+        result = assign_module_to_issue(cfg, issue_id, module["id"])
+        if result.get("ok"):
+            t["plane_module_id"] = module["id"]
+            t["plane_module_name"] = module["name"]
+            t["plane_module_url"] = module_url
+            updated.append(t["id"])
+        else:
+            failed.append(t["id"])
+
+    if updated:
+        save_tasks(data)
+    return {"ok": True, "module_name": module["name"], "updated": updated, "failed": failed, "skipped_unlinked": skipped}
 
 
 def bulk_update_plane_issues(only_labels=False):
@@ -325,6 +483,22 @@ def create_plane_issue(task):
         except Exception:
             pass
 
+    # Same story as cycles: a Bug/Incident task must land in the "slack bug / incident" module
+    # from the moment it's first sent to Plane, not only on a later edit (sync_module_membership
+    # only ever runs off a subsequent PATCH, which may never come for a task created already Done).
+    module_id = module_name = module_url = None
+    if is_slack_bug_incident_task(task.get("tags")):
+        try:
+            module = find_plane_module_by_name(cfg, PLANE_BUG_MODULE_NAME)
+            if module:
+                result = assign_module_to_issue(cfg, issue_id, module["id"])
+                if result.get("ok"):
+                    module_id = module["id"]
+                    module_name = module["name"]
+                    module_url = f"{PLANE_HOST}/{workspace}/projects/{project_id}/modules/{module['id']}/"
+        except Exception:
+            pass
+
     # Bookkeeping (status/priority/type/project/tags/stakeholders/dates) goes into a comment,
     # not the description — keeps the description as just the real notes, per user preference.
     comment_html = plane_meta_comment_html(task)
@@ -342,6 +516,9 @@ def create_plane_issue(task):
         "plane_cycle_id": active_cycle_id,
         "plane_cycle_name": active_cycle["name"] if active_cycle else None,
         "plane_cycle_url": f"{PLANE_HOST}/{workspace}/projects/{project_id}/cycles/{active_cycle_id}/" if active_cycle_id else None,
+        "plane_module_id": module_id,
+        "plane_module_name": module_name,
+        "plane_module_url": module_url,
     }
 
 
@@ -410,39 +587,52 @@ def update_plane_issue(task):
 def sync_plane_on_activity(task, new_activities):
     """Automatic counterpart to the manual 'Update in Plane' button: whenever a live edit adds
     activity to a task that's ALREADY linked to Plane (plane_issue_id set), push the current
-    state + a diff-style comment — no button click needed. Tasks not yet linked are left alone;
-    creating the link itself stays the explicit 'Send to Plane' action. Never raises — a Plane
-    hiccup (expired cookie, network blip) must never break saving the local edit; on failure the
-    caller gets back an {"error": ...} to surface as a soft toast, nothing more."""
+    state + a diff-style comment — no button click needed. Also keeps the task's cycle and
+    "slack bug / incident" module membership in step with its current status/tags on EVERY edit
+    (see sync_task_cycle / sync_module_membership), not just via the manual sweep buttons — this
+    runs regardless of whether the edit produced a logged activity entry, since a tags-only PATCH
+    (which is exactly what flips module membership) doesn't append one. Tasks not yet linked are
+    left alone; creating the link itself stays the explicit 'Send to Plane' action. Never raises —
+    a Plane hiccup (expired cookie, network blip) must never break saving the local edit; on
+    failure the caller gets back an {"error": ...} to surface as a soft toast, nothing more.
+    Returns whether any field on `task` was mutated, so the caller knows to persist it."""
     issue_id = task.get("plane_issue_id")
     if not issue_id:
-        return None
-    meaningful = [a for a in new_activities if a.get("type") not in ("created", "status_snapshot")]
-    if not meaningful:
-        return None
+        return None, False
     try:
         cfg = load_plane_config()
         if not (cfg.get("pat") or cfg.get("cookie")) or not cfg.get("workspace") or not cfg.get("project_id") or not cfg.get("assignee_id"):
-            return {"error": "Plane sync skipped — Plane isn't fully configured (check Plane settings)."}
+            return {"error": "Plane sync skipped — Plane isn't fully configured (check Plane settings)."}, False
+
+        changed = sync_module_membership(cfg, task)
+        changed = sync_task_cycle(cfg, task) or changed
+
+        meaningful = [a for a in new_activities if a.get("type") not in ("created", "status_snapshot")]
+        if not meaningful:
+            return ({"ok": True} if changed else None), changed
 
         err = push_plane_core_fields(cfg, task, issue_id)
         if err:
-            return err
+            return err, changed
 
         comment_html = plane_activity_diff_comment_html(meaningful)
         if comment_html:
             plane_request(cfg, "POST", f"{wpp(cfg)}/issues/{issue_id}/comments/", {"comment_html": comment_html})
-        return {"ok": True}
+
+        return {"ok": True}, changed
     except Exception as e:
-        return {"error": str(e)[:200]}
+        return {"error": str(e)[:200]}, False
 
 
 def apply_plane_auto_sync(task, session_activities):
     """Call once, right after save_tasks(), with whatever activity this request actually added
     (via append_activity_tracked). Auto-syncs to Plane if linked; on failure, stamps a transient
     _plane_sync_error onto the response dict for the frontend to toast — never persisted, since
-    save_tasks already ran with the clean state. Success is silent by design (no toast spam)."""
-    result = sync_plane_on_activity(task, session_activities)
+    save_tasks already ran with the clean state. Success is silent by design (no toast spam).
+    Also returns whether it mutated any plane_* field on `task` (module/cycle membership) that
+    the caller needs to save — those changes land on the same `task` object already inside the
+    already-loaded `data`, so the caller just needs one more save_tasks(data) call."""
+    result, changed = sync_plane_on_activity(task, session_activities)
     if result and result.get("error"):
         task["_plane_sync_error"] = result["error"]
-    return task
+    return task, changed

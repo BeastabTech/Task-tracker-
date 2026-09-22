@@ -16,6 +16,7 @@ const FILTER_LABELS = {
   stale: "Stale tasks",
   archived: "Archived",
   review: "Reviews",
+  bugmodule: "Bug / Incident tasks",
 };
 const CHIP_LABELS = {
   all: "All",
@@ -25,6 +26,7 @@ const CHIP_LABELS = {
   stale: "Stale",
   archived: "Archived",
   review: "Reviews",
+  bugmodule: "🐛 Bugs",
 };
 
 let tasks = [];
@@ -202,6 +204,10 @@ function quickPreviewHtml(parsed){
   if (parsed.start_date) chips.push(`Start ${fmtDate(parsed.start_date)}`);
   return chips.map(c => `<span>${escapeHtml(c)}</span>`).join("");
 }
+function isBugModuleTask(t){
+  const tags = t.tags || [];
+  return tags.includes("Slack Bug") || (tags.includes("Bug") && tags.includes("Incident"));
+}
 function taskMetaLine(t){
   const bits = [];
   if ((t.project || []).length) bits.push((t.project || []).slice(0, 2).join(", "));
@@ -218,6 +224,7 @@ function visibleTaskFilter(t, todayActivityIds){
   if (activeFilter === "high" && !["P1", "P2"].includes(t.priority || "P3")) return false;
   if (activeFilter === "stale" && !isStale(t)) return false;
   if (activeFilter === "review" && (t.type || "Task") !== "Review") return false;
+  if (activeFilter === "bugmodule" && !isBugModuleTask(t)) return false;
   if (activeProject && !(t.project || []).includes(activeProject)) return false;
   if (activeTag && !(t.tags || []).includes(activeTag)) return false;
   if (activeCycle && t.plane_cycle_name !== activeCycle) return false;
@@ -470,7 +477,7 @@ function ensureHoverTooltip(){
 }
 function taskTooltipHtml(t, extraLineHtml){
   const bits = [];
-  bits.push(`<div class="tt-title">${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</div>`);
+  bits.push(`<div class="tt-title">${t.type === "Review" ? "👀 " : ""}${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</div>`);
   bits.push(`<div class="tt-meta"><span class="row-status status-${slug(t.status)}">${escapeHtml(t.status)}</span><span class="tag priority priority-${t.priority||"P3"}">${escapeHtml(t.priority||"P3")}</span></div>`);
   if (extraLineHtml) bits.push(`<div class="tt-line tt-extra">${extraLineHtml}</div>`);
   if ((t.project||[]).length) bits.push(`<div class="tt-line"><strong>Project:</strong> ${escapeHtml(t.project.join(", "))}</div>`);
@@ -514,7 +521,7 @@ function compactTaskRow(t, label){
   row.innerHTML = `
     <span class="row-status status-${slug(label || t.status)}">${escapeHtml(label || t.status)}</span>
     <span class="row-main">
-      <span class="row-title">${t.type === "Review" ? "👀 " : ""}${escapeHtml(t.title)}</span>
+      <span class="row-title">${t.type === "Review" ? "👀 " : ""}${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</span>
       <span class="row-meta">${escapeHtml(taskMetaLine(t) || (t.updated_at ? `Updated ${fmtDate(t.updated_at)}` : ""))}</span>
     </span>
     <span class="row-priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
@@ -554,7 +561,7 @@ function compactActivityRow(item){
     <span class="timeline-dot status-${slug(activityStatus(item.activity, item.task) || item.task.status)}"></span>
     <span class="row-main">
       <span class="row-title">${escapeHtml(activityLabel(item.activity))}</span>
-      <span class="row-meta">${escapeHtml(item.task.title)} · ${escapeHtml(activityTime(item.activity))}${item.activity.inferred ? " · inferred" : ""}</span>
+      <span class="row-meta">${isBugModuleTask(item.task) ? "🐛 " : ""}${escapeHtml(item.task.title)} · ${escapeHtml(activityTime(item.activity))}${item.activity.inferred ? " · inferred" : ""}</span>
     </span>
     ${item.task.plane_url ? `<span class="row-plane-link" title="View in Plane">↗</span>` : ""}
   `;
@@ -902,7 +909,7 @@ function renderKanbanCard(t){
   card.draggable = true;
   const nextStatus = nextWorkflowStatus(t.status);
   card.innerHTML = `
-    <div class="kanban-title">${escapeHtml(t.title)}</div>
+    <div class="kanban-title">${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</div>
     <div class="kanban-meta">
       <span class="row-priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
       ${t.due_date ? `<span class="${isOverdue(t) ? "date-overdue" : ""}">Due ${fmtDate(t.due_date)}</span>` : ""}
@@ -1016,6 +1023,7 @@ function renderFilterCounts(){
     stale: activeTasks.filter(isStale).length,
     archived: tasks.filter(t => t.archived_at).length,
     review: activeTasks.filter(t => (t.type || "Task") === "Review").length,
+    bugmodule: activeTasks.filter(isBugModuleTask).length,
   };
   statuses.forEach(status => {
     countMap[status] = activeTasks.filter(t => t.status === status).length;
@@ -1181,7 +1189,7 @@ function renderCardReadOnly(card, t, statusHtml){
     ${statusHtml}
     <div style="flex:1;min-width:0;">
       <div class="title-row">
-        <span class="title-static">${escapeHtml(t.title)}</span>
+        <span class="title-static">${isBugModuleTask(t) ? "🐛 " : ""}${escapeHtml(t.title)}</span>
         <button type="button" class="edit-btn">✎ Edit</button>
       </div>
       <div class="meta">
@@ -1428,9 +1436,15 @@ function planeRowHtml(t){
           ? `<a href="${escapeHtml(t.plane_cycle_url)}" target="_blank" rel="noopener" class="plane-cycle-tag" title="Open this cycle in Plane">🔁 ${escapeHtml(t.plane_cycle_name)}</a>`
           : `<span class="plane-cycle-tag" title="Plane cycle this was in when first sent">🔁 ${escapeHtml(t.plane_cycle_name)}</span>`)
       : "";
+    const moduleHtml = t.plane_module_name
+      ? (t.plane_module_url
+          ? `<a href="${escapeHtml(t.plane_module_url)}" target="_blank" rel="noopener" class="plane-module-tag" title="Open this module in Plane">🧩 ${escapeHtml(t.plane_module_name)}</a>`
+          : `<span class="plane-module-tag" title="Plane module this issue is in">🧩 ${escapeHtml(t.plane_module_name)}</span>`)
+      : "";
     return `<div class="plane-row">
       <a href="${escapeHtml(t.plane_url)}" target="_blank" rel="noopener" class="plane-link">↗ View in Plane</a>
       ${cycleHtml}
+      ${moduleHtml}
       <button type="button" class="plane-btn plane-update-btn" title="Push this task's current status/priority/dates/notes to Plane">🔄 Update in Plane</button>
     </div>`;
   }
@@ -2074,6 +2088,30 @@ document.getElementById("bulkLabelSyncBtn").addEventListener("click", async () =
   } finally {
     btn.disabled = false;
     btn.textContent = "🏷️ Sync labels";
+  }
+});
+
+document.getElementById("bugModuleSyncBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("bugModuleSyncBtn");
+  btn.disabled = true;
+  btn.textContent = "🧩 Syncing…";
+  try {
+    const res = await fetch("/api/plane-module-backfill", { method: "POST" });
+    const data = await res.json();
+    if (data.error) {
+      showToast("Module sync failed: " + data.error);
+    } else {
+      await loadAll();
+      const parts = [`${data.updated.length} added to "${data.module_name}"`];
+      if (data.failed.length) parts.push(`${data.failed.length} failed`);
+      if (data.skipped_unlinked.length) parts.push(`${data.skipped_unlinked.length} not yet linked to Plane`);
+      showToast(parts.join(", "));
+    }
+  } catch (err) {
+    showToast("Module sync failed");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🧩 Sync bug module";
   }
 });
 

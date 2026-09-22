@@ -432,6 +432,13 @@ input[type=number]{width:62px;}
   background:var(--accent-soft);color:var(--accent-strong);text-decoration:none;
 }
 a.plane-cycle-tag:hover{background:var(--accent-strong);color:#fff;}
+.plane-module-tag{
+  display:inline-flex;align-items:center;gap:.25rem;font-size:.72rem;font-weight:600;
+  padding:.3rem .6rem;border-radius:6px;border-color:transparent;
+  background:var(--warn-soft);color:var(--warn);text-decoration:none;
+}
+a.plane-module-tag:hover{background:var(--warn);color:#fff;}
+.row-bug-icon{flex:0 0 auto;font-size:.72rem;line-height:1;}
 .attach-chip{display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;background:var(--accent-soft);color:var(--accent-strong);border-radius:6px;padding:.15rem .5rem;max-width:220px;}
 .attach-chip a{color:inherit;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .attach-chip .x{cursor:pointer;opacity:.6;}

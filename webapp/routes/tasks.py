@@ -38,7 +38,9 @@ def patch_attachments(handler, m):
         return handler._send_json({"error": "not found"}, status=404)
     session_activities = apply_attachment_patch(found, body)
     save_tasks(data)
-    found = apply_plane_auto_sync(found, session_activities)
+    found, plane_changed = apply_plane_auto_sync(found, session_activities)
+    if plane_changed:
+        save_tasks(data)
     handler._send_json(found)
 
 
@@ -52,7 +54,9 @@ def patch_task(handler, m):
         return handler._send_json({"error": "not found"}, status=404)
     session_activities = apply_task_patch(found, body)
     save_tasks(data)
-    found = apply_plane_auto_sync(found, session_activities)
+    found, plane_changed = apply_plane_auto_sync(found, session_activities)
+    if plane_changed:
+        save_tasks(data)
     handler._send_json(found)
 
 
@@ -65,7 +69,9 @@ def delete_attachment(handler, m):
         return handler._send_json({"error": "not found"}, status=404)
     session_activities = remove_attachment(found, idx)
     save_tasks(data)
-    found = apply_plane_auto_sync(found, session_activities)
+    found, plane_changed = apply_plane_auto_sync(found, session_activities)
+    if plane_changed:
+        save_tasks(data)
     handler._send_json(found)
 
 
@@ -78,7 +84,9 @@ def delete_task(handler, m):
         return handler._send_json({"error": "not found"}, status=404)
     session_activities = archive_task(found)
     save_tasks(data)
-    found = apply_plane_auto_sync(found, session_activities)
+    found, plane_changed = apply_plane_auto_sync(found, session_activities)
+    if plane_changed:
+        save_tasks(data)
     handler._send_json(found)
 
 
@@ -95,5 +103,7 @@ def post_comment(handler, m):
         return handler._send_json({"error": "not found"}, status=404)
     session_activities = add_comment(found, text)
     save_tasks(data)
-    found = apply_plane_auto_sync(found, session_activities)
+    found, plane_changed = apply_plane_auto_sync(found, session_activities)
+    if plane_changed:
+        save_tasks(data)
     handler._send_json(found)

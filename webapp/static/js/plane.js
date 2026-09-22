@@ -25,6 +25,9 @@ export async function sendTaskToPlane(taskId){
     t.plane_cycle_id = data.plane_cycle_id;
     t.plane_cycle_name = data.plane_cycle_name;
     t.plane_cycle_url = data.plane_cycle_url;
+    t.plane_module_id = data.plane_module_id;
+    t.plane_module_name = data.plane_module_name;
+    t.plane_module_url = data.plane_module_url;
   }
   return data;
 }
