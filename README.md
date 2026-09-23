@@ -66,8 +66,11 @@ retries automatically.
 
 ## Notes
 
-- Plane pushes are manual only: "Send to Plane" creates an issue once; "Update in Plane" pushes
-  your current local edits on demand. Nothing syncs automatically in the background.
+- Sending a task to Plane is manual only: "Send to Plane" creates an issue once; "Update in Plane"
+  pushes your current local edits on demand. Nothing is ever auto-created in Plane.
+- Once a task **is** linked to Plane, its module membership ("slack bug / incident", based on
+  tags) and cycle membership stay in sync automatically on every edit — see
+  [AGENTS.md](AGENTS.md) for how.
 - The Plane issue **description** holds only your notes; status/priority/project/tags/stakeholders/
   dates are posted as a **comment** instead, so Plane's own description field stays clean and the
   bookkeeping still shows up in the Activity feed.

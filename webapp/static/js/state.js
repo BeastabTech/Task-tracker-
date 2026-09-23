@@ -36,7 +36,7 @@ export const state = {
   tasks: [],
   statuses: ["To Do", "In Progress", "In Review", "Pending", "Done", "Cancelled"],
   priorities: ["P1", "P2", "P3", "P4"],
-  taskTypes: ["Task", "Review"],
+  taskTypes: ["Task", "Review", "Bug"],
   activeFilter: "all",
   activeProject: "",
   activeTag: "",

@@ -98,9 +98,14 @@ export function quickPreviewHtml(parsed){
   if (parsed.start_date) chips.push(`Start ${fmtDate(parsed.start_date)}`);
   return chips.map(c => `<span>${escapeHtml(c)}</span>`).join("");
 }
+// Local "is this a bug" check used for the Bugs filter/badges — kept in sync with the backend's
+// is_slack_bug_incident_task (app/constants.py), which is what actually drives Plane module
+// membership. Also recognizes type === "Bug" (the local-only classification, independent of
+// Plane) so tasks marked that way show up here too without needing any tag.
 export function isBugModuleTask(t){
+  if (t.type === "Bug") return true;
   const tags = t.tags || [];
-  return tags.includes("Slack Bug") || (tags.includes("Bug") && tags.includes("Incident"));
+  return tags.includes("Slack Bug") || tags.includes("Bug");
 }
 export function taskMetaLine(t){
   const bits = [];

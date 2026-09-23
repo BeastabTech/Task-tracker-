@@ -857,6 +857,7 @@ export function renderCardReadOnly(card, t, statusHtml){
       <div class="meta">
         <span class="tag priority priority-${t.priority || "P3"}">${escapeHtml(t.priority || "P3")}</span>
         ${t.type === "Review" ? `<span class="tag type-review">👀 Review</span>` : ""}
+        ${t.type === "Bug" ? `<span class="tag type-bug">🐛 Bug</span>` : ""}
         ${(t.project||[]).map(p => `<span class="tag">${escapeHtml(p)}</span>`).join("")}
         ${(t.tags||[]).map(g => `<span class="tag tag-accent">${escapeHtml(g)}</span>`).join("")}
         ${t.start_date ? `<span class="period">▶ ${fmtDate(t.start_date)}</span>` : ""}

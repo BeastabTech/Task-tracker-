@@ -273,6 +273,7 @@ input[type=number]{width:62px;}
 .priority-P3{background:var(--accent-soft);color:var(--accent-strong);}
 .priority-P4{background:var(--surface-alt);color:var(--text-muted);}
 .type-review{font-family:inherit;font-weight:700;background:var(--review-soft);color:var(--review);border-color:transparent;}
+.type-bug{font-family:inherit;font-weight:700;background:var(--danger-soft);color:var(--danger);border-color:transparent;}
 
 .field-row{display:flex;align-items:flex-start;gap:.4rem;margin-top:.35rem;}
 .field-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);flex-shrink:0;width:88px;padding-top:.28rem;}

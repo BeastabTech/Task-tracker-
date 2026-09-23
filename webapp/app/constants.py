@@ -1,6 +1,6 @@
 STATUSES = ["To Do", "In Progress", "In Review", "Pending", "Done", "Cancelled"]
 PRIORITIES = ["P1", "P2", "P3", "P4"]
-TYPES = ["Task", "Review"]
+TYPES = ["Task", "Review", "Bug"]
 DATE_FIELDS = ("discussed_from", "discussed_to", "start_date", "due_date", "done_at", "closed_at", "cancelled_at")
 
 ACTIVITY_LIMIT = 200
@@ -43,7 +43,7 @@ PLANE_BUG_MODULE_NAME = "slack bug / incident"
 
 def is_slack_bug_incident_task(tags):
     tags = tags or []
-    return "Slack Bug" in tags or ("Bug" in tags and "Incident" in tags)
+    return "Slack Bug" in tags or "Bug" in tags
 
 LABEL_COLORS = [
     "#F87171", "#FB923C", "#FBBF24", "#A3E635", "#34D399",
