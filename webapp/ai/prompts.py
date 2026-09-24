@@ -186,9 +186,11 @@ AI_PROMPTS = {
     ),
 
     "task_type": (
-        "Classify this engineering item using only one of these types: Task, Review. "
+        "Classify this engineering item using only one of these types: Task, Review, Bug. "
         "Use Review when the main purpose is code, architecture, implementation, or technical review. "
-        "Use Task for implementation, investigation, bug fixing, operational work, or other execution work. "
+        "Use Bug when the item is fixing or investigating a defect, incident, or something broken in "
+        "production or existing behavior. "
+        "Use Task for new implementation, feature work, operational work, or other execution work. "
         "Reply with ONLY the type.\n\n"
         "Task:\n{input}"
     ),
@@ -293,7 +295,8 @@ AI_PROMPTS = {
         "description (string, 2-4 plain sentences, no markdown), "
         "labels (array of 1-4 lowercase hyphenated labels), "
         "priority (one of \"P1\", \"P2\", \"P3\", \"P4\"), "
-        "type (one of \"Task\", \"Review\"), "
+        "type (one of \"Task\", \"Review\", \"Bug\" — use Bug for fixing/investigating a defect, "
+        "incident, or something broken; Review for code/architecture review; Task otherwise), "
         "acceptance_criteria (array of 3-5 short, testable strings). "
         "Do not invent requirements, systems, or details that are not implied by the draft. "
         "If the draft already has a good title or field, keep its meaning and just clean it up "

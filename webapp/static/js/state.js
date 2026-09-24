@@ -1,12 +1,12 @@
 export const API = "/api/tasks";
 export const USER_NAME = "Beastab";
 export const MONTH_ORDER = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-export const STATUS_ORDER = { "In Progress": 0, "In Review": 1, "Pending": 2, "To Do": 3, "Done": 4, "Cancelled": 5 };
-export const STATUS_DOT = { "In Progress": "var(--accent)", "In Review": "var(--review)", "Pending": "var(--warn)", "To Do": "var(--todo)", "Done": "var(--ok)", "Cancelled": "var(--cancel)" };
+export const STATUS_ORDER = { "Blocker": 0, "In Progress": 1, "In Review": 2, "Pending": 3, "To Do": 4, "Done": 5, "Cancelled": 6 };
+export const STATUS_DOT = { "Blocker": "var(--danger)", "In Progress": "var(--accent)", "In Review": "var(--review)", "Pending": "var(--warn)", "To Do": "var(--todo)", "Done": "var(--ok)", "Cancelled": "var(--cancel)" };
 export const PRIORITY_ORDER = { "P1": 0, "P2": 1, "P3": 2, "P4": 3 };
 export const DAILY_ACTIVITY_TYPES = new Set(["status_changed", "status_snapshot", "reopened", "cancelled"]);
 export const CLOSED_STATUSES = new Set(["Done", "Cancelled"]);
-export const ACTIVE_WORK_STATUSES = new Set(["In Progress", "In Review", "Pending"]);
+export const ACTIVE_WORK_STATUSES = new Set(["In Progress", "In Review", "Pending", "Blocker"]);
 export const STALE_DAYS = 7;
 export const FILTER_LABELS = {
   all: "All tasks",
@@ -34,7 +34,7 @@ export const CHIP_LABELS = {
    is visible everywhere without each module needing its own setter function. */
 export const state = {
   tasks: [],
-  statuses: ["To Do", "In Progress", "In Review", "Pending", "Done", "Cancelled"],
+  statuses: ["To Do", "In Progress", "In Review", "Pending", "Blocker", "Done", "Cancelled"],
   priorities: ["P1", "P2", "P3", "P4"],
   taskTypes: ["Task", "Review", "Bug"],
   activeFilter: "all",

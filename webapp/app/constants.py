@@ -1,4 +1,4 @@
-STATUSES = ["To Do", "In Progress", "In Review", "Pending", "Done", "Cancelled"]
+STATUSES = ["To Do", "In Progress", "In Review", "Pending", "Blocker", "Done", "Cancelled"]
 PRIORITIES = ["P1", "P2", "P3", "P4"]
 TYPES = ["Task", "Review", "Bug"]
 DATE_FIELDS = ("discussed_from", "discussed_to", "start_date", "due_date", "done_at", "closed_at", "cancelled_at")
@@ -33,7 +33,7 @@ PLANE_GROUP_TO_STATUS = {
     "cancelled": "Cancelled",
 }
 
-PLANE_ACTIVE_WORK_STATUSES = {"In Progress", "In Review", "Pending"}
+PLANE_ACTIVE_WORK_STATUSES = {"In Progress", "In Review", "Pending", "Blocker"}
 
 # Plane module every Slack-alert-driven bug/incident task should sit in (see TKT-1608, which
 # this convention was copied from). Matched by name via the Plane API, not a hardcoded id, since

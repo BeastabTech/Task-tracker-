@@ -18,6 +18,36 @@ from the code alone. Read this before touching tagging, Plane sync, or the task 
 - `tasks.json` (repo root) — the flat-file DB. Gitignored. Back it up
   (`cp tasks.json tasks.json.bak_before_<thing>_<timestamp>`) before any bulk/scripted edit.
 
+## Adding a new status (e.g. "Blocker")
+
+Statuses are **not** fully data-driven end to end — most of the app reads `app/constants.py:
+STATUSES` dynamically (frontend `state.statuses` is overwritten from `GET /api/meta` on load, and
+every dropdown/kanban-column/count in `static/js/views.js` iterates `state.statuses`), but the
+**status filter chips are hardcoded markup** in `static/index.html` (`<span class="chip"
+data-filter="...">`). Adding a status to `STATUSES` alone will NOT give it a filter chip — you
+must add the `<span>` by hand in `index.html` too, in the same position as `STATUS_ORDER` in
+`static/js/state.js` (this was missed once and the new status silently had no chip despite
+counting correctly everywhere else).
+
+Full checklist for a new local status, using "Blocker" (added 2026-09-24) as the example:
+1. `app/constants.py`: add to `STATUSES`, and to `PLANE_ACTIVE_WORK_STATUSES` if it represents
+   active/open work (controls whether `roll_open_tasks_to_current_cycle` sweeps it into the
+   current Plane cycle).
+2. `static/js/state.js`: add entries to `STATUS_ORDER`, `STATUS_DOT`, `ACTIVE_WORK_STATUSES` (this
+   one gates what shows up in the daily standup "active work" grouping in `updates.js`), and the
+   default `statuses` array.
+3. `static/index.html`: add the chip `<span>` — this is the step that's easy to forget.
+4. `static/style.css`: add `.status-tone-<Name>` and `.status-col-<Name>` (kanban column tint).
+5. If it should map to a Plane state: add `"<Status>": "<Plane state name>"` to `status_map` in
+   `webapp/plane_config.json` (the state must already exist in that file's `states` dict — get the
+   exact name/id from Plane, e.g. via the workspace's state list). No code change needed —
+   `plane_state_id()` in `plane/mapper.py` reads `status_map` + `states` directly.
+6. Restart the server (`app/constants.py` is only read at import time).
+7. `nextWorkflowStatus()` in `static/js/views.js` (the kanban card's single-click "advance" button)
+   is a deliberately separate, hardcoded linear list — a side-state like Blocker or Cancelled
+   should NOT be added to it, since "advance" should keep skipping straight through to the next
+   real workflow stage.
+
 ## Task `type` vs `tags` — two independent axes
 
 - `type` (`app/constants.py: TYPES`, currently `["Task", "Review", "Bug"]`) is a **local-only**
@@ -96,6 +126,20 @@ from the code alone. Read this before touching tagging, Plane sync, or the task 
 - Badge rendering (🐛 icon prefix, module tag chip) is wired through `taskTooltipHtml`,
   `compactTaskRow`, kanban card title, `renderCardReadOnly`'s `title-static`, and
   `renderFilterCounts` in `static/js/views.js` — all keyed off `isBugModuleTask(t)`.
+
+## AI prompts (`webapp/ai/prompts.py`) — not fully constant-driven either
+
+- `ai/agent.py`, `ai/fill.py`, and `ai/parser.py` all import `STATUSES`/`TYPES` from
+  `app/constants.py` directly and validate/enumerate against them dynamically — adding a status or
+  type there is automatically picked up (e.g. the AI agent's `update_status` action lists valid
+  statuses straight from `STATUSES`).
+- `ai/prompts.py`, however, is a dict of **static prompt strings** handed to the LLM — it does NOT
+  read `TYPES`/`STATUSES`, so any prompt that spells out the valid values in its instructions
+  (currently `"task_type"` and `"task_fill"`, both of which literally list `"Task, Review"`/
+  `"Bug"`) needs a manual edit whenever `TYPES` changes, or the model will never suggest the new
+  value even though `ai/parser.py`'s `validate_output()` would happily accept it. Updated for
+  `Bug` on 2026-09-24 — check `ai/prompts.py` again next time `TYPES` (or a status the prompts
+  mention by name) changes.
 
 ## Plane push policy (do not automate)
 
