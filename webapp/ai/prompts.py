@@ -34,14 +34,21 @@ AI_PROMPTS = {
     ),
 
     "standup": (
-        "Write a concise daily standup update from the provided tasks. "
-        "Use plain text and * bullets, with these sections only: Yesterday, Today, Blockers. "
-        "Focus on actual progress, completed work, current work, decisions, dependencies, and blockers. "
-        "Combine related tasks when useful. "
-        "Do not repeat task titles unnecessarily. "
+        "Write a detailed daily standup update from the provided tasks, giving full visibility into "
+        "what shipped, what is currently being worked on, what is coming up next, and what is blocked. "
+        "Use plain text and - bullets, with these sections only: Yesterday, Today, Blockers. "
+        "Put every task on its own bullet. Do not merge or combine separate tasks into one line, "
+        "even if they belong to the same project or feature. "
+        "Do not paste task titles verbatim. Rewrite each one as a natural, specific sentence that keeps "
+        "the technical meaning, root cause, API/service names, and outcome, but reads like something an "
+        "engineer would actually type, not a raw ticket title. "
+        "If a task carries a ticket reference, keep it and put it in parentheses at the end of the line. "
+        "Under Today, include both work currently in progress or in review and any not-yet-started work "
+        "planned next, and say which is which. "
+        "Under Blockers, state what is blocked, why, and what is needed to unblock it. "
         "Skip empty sections and anything with no meaningful update. "
-        "Keep the update natural and suitable for a senior software engineer. "
-        "Max 12 lines, no corporate filler.\n\n"
+        "Use commas instead of em dashes, never use em dashes. "
+        "Keep the tone natural and direct, suitable for a senior software engineer, no corporate filler.\n\n"
         "Tasks:\n{input}"
     ),
 
@@ -229,8 +236,11 @@ AI_PROMPTS = {
         "Highlight completed work, active work, blockers, overdue items, and notable changes. "
         "Prioritize meaningful changes over routine activity. "
         "Avoid repeating the same task across multiple sections. "
+        "Do not paste task titles verbatim, rewrite each into a natural sentence that keeps the technical "
+        "meaning and outcome. Keep any ticket reference in parentheses at the end of the line. "
         "Use plain text with these sections only: Completed, In Progress, Blocked, Attention. "
         "Skip empty sections. "
+        "Use commas instead of em dashes, never use em dashes. "
         "Max 15 lines.\n\n"
         "Activity:\n{input}"
     ),
@@ -241,8 +251,11 @@ AI_PROMPTS = {
         "Group related work where useful. "
         "Do not simply list every task. "
         "Separate completed outcomes from ongoing work and risks. "
+        "Do not paste task titles verbatim, rewrite each into a natural sentence that keeps the technical "
+        "meaning and outcome. Keep any ticket reference in parentheses at the end of the line. "
         "Use plain text with these sections only: Completed, Ongoing, Blockers, Carry Over. "
         "Skip empty sections. "
+        "Use commas instead of em dashes, never use em dashes. "
         "Max 20 lines.\n\n"
         "Activity:\n{input}"
     ),
