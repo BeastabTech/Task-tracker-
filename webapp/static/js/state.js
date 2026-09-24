@@ -52,7 +52,7 @@ export const state = {
   editingIds: new Set(),
   highlightedTaskId: "",
   viewMode: localStorage.getItem("taskViewMode") || "list",
-  updateMode: localStorage.getItem("dailyUpdateMode") || "short",
+  updateMode: localStorage.getItem("dailyUpdateMode") || "detailed",
   draggedTaskId: "",
   pointerDrag: null,
   newProjectVals: [],

@@ -374,9 +374,8 @@ export function renderUpdateModeSwitch(){
     evening: "Copy evening wrap-up",
     detailed: "Copy detailed update",
     speak: "Copy talking points",
-    short: "Copy short update",
   };
-  if (copyBtn) copyBtn.textContent = copyLabels[state.updateMode] || copyLabels.short;
+  if (copyBtn) copyBtn.textContent = copyLabels[state.updateMode] || copyLabels.detailed;
   const previewBtn = document.getElementById("previewUpdateBtn");
   const previewOpen = document.getElementById("updatePreviewWrap")?.classList.contains("open");
   if (previewBtn) previewBtn.textContent = previewOpen ? "Hide preview" : "Show preview";
@@ -387,9 +386,8 @@ export function renderUpdateModeSwitch(){
       evening: "Completed today · In progress · New tasks · Carry forward",
       detailed: "Yesterday / Today / Blockers / Backlog",
       speak: "Yesterday / Today / Blockers / Backlog",
-      short: "Yesterday / Today / Blockers / Backlog",
     };
-    titleEl.textContent = titles[state.updateMode] || titles.short;
+    titleEl.textContent = titles[state.updateMode] || titles.detailed;
   }
 }
 

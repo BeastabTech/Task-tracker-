@@ -1,5 +1,5 @@
 import { state, ACTIVE_WORK_STATUSES, STATUS_ORDER } from "./state.js";
-import { fmtDate, todayStr, yesterdayStr, isClosed, isOverdue, clipText, uniqueVals } from "./utils.js";
+import { fmtDate, todayStr, yesterdayStr, isClosed, isOverdue, clipText } from "./utils.js";
 import { dailyEntries, statusAtEndOfDay, previousStatusForDay } from "./activity.js";
 import { backlogTasks, renderUpdateModeSwitch } from "./views.js";
 
@@ -25,25 +25,18 @@ function formatUpdateTask(item, options = {}){
   const status = item.status || t.status;
   const label = options.label || updateStatusLabel(status, item.from, options.suffix || "");
   const detail = updateDetailLine(t);
-  return `* [${label}] ${t.title}${detail ? `\n${detail}` : ""}`;
+  return `- [${label}] ${t.title}${detail ? `\n${detail}` : ""}`;
 }
 
 function formatUpdateSection(title, rows){
   return [
     title,
-    rows.length ? rows.join("\n") : "* None",
+    rows.length ? rows.join("\n") : "- None",
   ].join("\n");
 }
 
 function shortTaskTitle(t, max = 110){
   return clipText(t.title, max);
-}
-
-function shortTaskLine(t, prefix = "-"){
-  const bits = [];
-  if ((t.project || []).length) bits.push((t.project || [])[0]);
-  if (t.due_date && !isClosed(t)) bits.push(`due ${fmtDate(t.due_date)}`);
-  return `${prefix} ${shortTaskTitle(t)}${bits.length ? ` (${bits.join(", ")})` : ""}`;
 }
 
 export function buildUpdateContext(){
@@ -152,9 +145,9 @@ function sectionBlock(emoji, heading, lines, fallback = "  (none)"){
 
 function buildMorningUpdateText(context){
   const { today, rawCurrentActive, rawNewSinceYesterday, rawNewToday, rawBacklog } = context;
-  const lines = [`☀️  Morning Update — ${fmtDate(today)}`, ""];
+  const lines = [`☀️  Morning Update - ${fmtDate(today)}`, ""];
 
-  // Active work — all statuses (In Progress / In Review / Pending)
+  // Active work, all statuses (In Progress / In Review / Pending)
   const activeLines = rawCurrentActive.map(t => {
     const statusTag = t.status === "Pending" ? "⏸ Pending" : t.status === "In Review" ? "👀 In Review" : "▶ In Progress";
     return `  • [${statusTag}] ${t.title}${taskMeta(t)}${taskNote(t)}`;
@@ -184,7 +177,7 @@ function buildMorningUpdateText(context){
   const overdueList = state.tasks.filter(t => !t.archived_at && isOverdue(t));
   if (overdueList.length) {
     const overdueLines = overdueList.map(t =>
-      `  • ${t.title}${taskMeta(t)} — was due ${fmtDate(t.due_date)}`
+      `  • ${t.title}${taskMeta(t)} (was due ${fmtDate(t.due_date)})`
     );
     lines.push(sectionBlock("⚠️", `Overdue (${overdueList.length})`, overdueLines));
     lines.push("");
@@ -201,7 +194,7 @@ function buildMorningUpdateText(context){
 
 function buildEveningUpdateText(context){
   const { today, rawCompletedToday, rawCurrentActive, rawNewToday, rawCancelledToday, rawUnsentToPlane } = context;
-  const lines = [`🌙  Evening Wrap-up — ${fmtDate(today)}`, ""];
+  const lines = [`🌙  Evening Wrap-up - ${fmtDate(today)}`, ""];
 
   // Completed today
   const completedLines = rawCompletedToday.map(t =>
@@ -210,12 +203,12 @@ function buildEveningUpdateText(context){
   lines.push(sectionBlock("✅", `Completed Today (${rawCompletedToday.length})`, completedLines, "  (nothing closed today)"));
   lines.push("");
 
-  // Still in progress — what carries to tomorrow
+  // Still in progress, carries to tomorrow
   const inProgressLines = rawCurrentActive.map(t => {
     const statusTag = t.status === "Pending" ? "⏸" : t.status === "In Review" ? "👀" : "▶";
     return `  • ${statusTag} ${t.title}${taskMeta(t)}${taskNote(t)}`;
   });
-  lines.push(sectionBlock("🔄", `Still In Progress — carries to tomorrow (${rawCurrentActive.length})`, inProgressLines));
+  lines.push(sectionBlock("🔄", `Still In Progress, carries to tomorrow (${rawCurrentActive.length})`, inProgressLines));
   lines.push("");
 
   // New tasks added today
@@ -230,7 +223,7 @@ function buildEveningUpdateText(context){
   // Cancelled today
   if (rawCancelledToday.length) {
     const cancelLines = rawCancelledToday.map(t =>
-      `  • ${t.title}${t.cancel_reason ? ` — ${clipText(t.cancel_reason, 80)}` : ""}`
+      `  • ${t.title}${t.cancel_reason ? ` (${clipText(t.cancel_reason, 80)})` : ""}`
     );
     lines.push(sectionBlock("❌", `Cancelled Today (${rawCancelledToday.length})`, cancelLines));
     lines.push("");
@@ -283,44 +276,12 @@ function buildDetailedUpdateText(context){
     otherToday.length ? `\n${formatUpdateSection("Other changes today", otherToday)}` : "",
     "",
     `Backlog focus (top ${state.backlogLimit})`,
-    backlogRows.length ? backlogRows.join("\n") : "* None",
+    backlogRows.length ? backlogRows.join("\n") : "- None",
   ];
   return sections.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
-function buildShortUpdateText(context){
-  const completed = uniqueVals([
-    ...context.rawCompletedToday.map(shortTaskTitle),
-    ...context.rawCompletedYesterday.map(t => `${shortTaskTitle(t)} yesterday`),
-  ]);
-  const active = context.rawCurrentActive.slice(0, 4).map(t => {
-    const status = t.status === "In Review" ? "review" : t.status === "Pending" ? "pending" : "progress";
-    return shortTaskLine(t, `- ${status}:`);
-  });
-  const cancelled = context.rawCancelledToday.slice(0, 3).map(t =>
-    `- cancelled: ${shortTaskTitle(t)}${t.cancel_reason ? ` (${clipText(t.cancel_reason, 80)})` : ""}`
-  );
-  const next = context.rawBacklog.slice(0, 3).map(t => shortTaskLine(t));
-
-  const lines = [`Update - ${fmtDate(context.today)}`];
-  lines.push("");
-  lines.push("Done:");
-  lines.push(...(completed.length ? completed.map(t => `- ${t}`) : ["- None"]));
-  lines.push("");
-  lines.push("Now:");
-  lines.push(...(active.length ? active : ["- None"]));
-  if (cancelled.length) {
-    lines.push("");
-    lines.push("Cancelled:");
-    lines.push(...cancelled);
-  }
-  lines.push("");
-  lines.push("Next:");
-  lines.push(...(next.length ? next : ["- None"]));
-  return lines.join("\n");
-}
-
-// Talking points for actually saying out loud in standup — not a written report. Terse, capped
+// Talking points for actually saying out loud in standup, not a written report. Terse, capped
 // short so it's a glance-and-speak list, and splits out "Blockers" (Pending-status work, plus
 // anything overdue) as its own callout instead of burying it inside "current work", since that's
 // specifically what a standup wants flagged.
@@ -374,14 +335,22 @@ export function buildDailyUpdateText(mode = state.updateMode){
   const context = buildUpdateContext();
   if (mode === "morning") return buildMorningUpdateText(context);
   if (mode === "evening") return buildEveningUpdateText(context);
-  if (mode === "detailed") return buildDetailedUpdateText(context);
   if (mode === "speak") return buildStandupSpeakText(context);
-  return buildShortUpdateText(context);
+  return buildDetailedUpdateText(context);
+}
+
+// Set whenever the AI reframe produces text for the current preview, so "Copy update" copies
+// what's actually on screen instead of silently re-building the non-AI version underneath it.
+export let lastAiText = null;
+
+export function setLastAiText(text){
+  lastAiText = text;
 }
 
 export function refreshUpdatePreview(open = false){
   const preview = document.getElementById("updatePreview");
   const wrap = document.getElementById("updatePreviewWrap");
+  lastAiText = null;
   preview.textContent = buildDailyUpdateText();
   wrap.classList.toggle("open", open || wrap.classList.contains("open"));
   renderUpdateModeSwitch();

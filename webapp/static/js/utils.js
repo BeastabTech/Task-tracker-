@@ -125,6 +125,20 @@ export function clipText(text, max = 220){
   return `${clean.slice(0, max - 3)}...`;
 }
 
+// Strips markdown formatting so pasting into Slack/WhatsApp/email shows clean plain text
+// instead of literal **bold**, # headers, or `code` markers (the AI reframe can add these
+// even when told to write plain text).
+export function stripMarkdown(text){
+  return (text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/(^|\s)\*(?!\s)([^*\n]+?)(?<!\s)\*(?=\s|$)/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s*[*+]\s+/gm, "- ");
+}
+
 export async function copyText(text){
   if (navigator.clipboard && window.isSecureContext) {
     try {

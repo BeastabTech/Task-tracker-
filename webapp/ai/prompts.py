@@ -37,6 +37,8 @@ AI_PROMPTS = {
         "Write a detailed daily standup update from the provided tasks, giving full visibility into "
         "what shipped, what is currently being worked on, what is coming up next, and what is blocked. "
         "Use plain text and - bullets, with these sections only: Yesterday, Today, Blockers. "
+        "Do not use any markdown formatting: no **bold**, no _italics_, no # headers, no backticks. "
+        "Section headers are just the word followed by a colon, nothing else.\n"
         "Put every task on its own bullet. Do not merge or combine separate tasks into one line, "
         "even if they belong to the same project or feature. "
         "Do not paste task titles verbatim. Rewrite each one as a natural, specific sentence that keeps "
@@ -241,6 +243,7 @@ AI_PROMPTS = {
         "Use plain text with these sections only: Completed, In Progress, Blocked, Attention. "
         "Skip empty sections. "
         "Use commas instead of em dashes, never use em dashes. "
+        "Do not use any markdown formatting: no **bold**, no _italics_, no # headers, no backticks. "
         "Max 15 lines.\n\n"
         "Activity:\n{input}"
     ),
@@ -256,6 +259,7 @@ AI_PROMPTS = {
         "Use plain text with these sections only: Completed, Ongoing, Blockers, Carry Over. "
         "Skip empty sections. "
         "Use commas instead of em dashes, never use em dashes. "
+        "Do not use any markdown formatting: no **bold**, no _italics_, no # headers, no backticks. "
         "Max 20 lines.\n\n"
         "Activity:\n{input}"
     ),

@@ -1,5 +1,5 @@
 import { state, API, USER_NAME } from "./state.js";
-import { todayStr, parseQuickInput, quickPreviewHtml, uniqueVals, copyText } from "./utils.js";
+import { todayStr, parseQuickInput, quickPreviewHtml, uniqueVals, copyText, stripMarkdown } from "./utils.js";
 import { showToast } from "./notifications.js";
 import { aiGenerate } from "./ai.js";
 import { sendTaskToPlane, maybeAutoSyncCycles } from "./plane.js";
@@ -8,7 +8,7 @@ import {
   populateCycleFilter, populateStatusSelect, populatePrioritySelects, populateTypeSelect,
   populateDatalists, initAddFormChipFields, renderUpdateModeSwitch, setActiveFilter, setViewMode,
 } from "./views.js";
-import { buildDailyUpdateText, refreshUpdatePreview } from "./updates.js";
+import { buildDailyUpdateText, refreshUpdatePreview, lastAiText, setLastAiText } from "./updates.js";
 import { wireAskAI } from "./agent.js";
 import { wireAiFill } from "./aifill.js";
 
@@ -85,8 +85,9 @@ document.querySelectorAll("[data-view-mode]").forEach(btn => {
 
 document.querySelectorAll("[data-update-mode]").forEach(btn => {
   btn.addEventListener("click", () => {
-    state.updateMode = ["morning", "evening", "detailed", "speak", "short"].includes(btn.dataset.updateMode) ? btn.dataset.updateMode : "short";
+    state.updateMode = ["morning", "evening", "detailed", "speak"].includes(btn.dataset.updateMode) ? btn.dataset.updateMode : "detailed";
     localStorage.setItem("dailyUpdateMode", state.updateMode);
+    setLastAiText(null);
     renderUpdateModeSwitch();
     if (document.getElementById("updatePreviewWrap").classList.contains("open")) refreshUpdatePreview(true);
   });
@@ -219,8 +220,7 @@ document.getElementById("addForm").addEventListener("submit", async e => {
 });
 
 document.getElementById("copyBtn").addEventListener("click", () => {
-  const text = buildDailyUpdateText();
-  refreshUpdatePreview(false);
+  const text = stripMarkdown(lastAiText || buildDailyUpdateText());
   copyText(text).then(() => showToast("Copied daily update ✓")).catch(() => {
     console.log(text);
     showToast("Copy failed; update logged");
@@ -246,10 +246,12 @@ document.getElementById("aiStandupBtn").addEventListener("click", async () => {
   aiBtn.textContent = "✨ Thinking…";
   aiBtn.disabled = true;
   wrap.classList.add("open");
+  setLastAiText(null);
   preview.textContent = baseText;
   renderUpdateModeSwitch();
   try {
     const result = await aiGenerate("standup", baseText);
+    setLastAiText(result);
     preview.textContent = result;
   } catch (err) {
     showToast("AI error: " + err.message);
