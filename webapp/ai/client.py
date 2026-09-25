@@ -9,13 +9,16 @@ class OllamaError(Exception):
     pass
 
 
-def call_ollama(prompt, model, timeout=90, num_predict=300):
+def call_ollama(prompt, model, timeout=90, num_predict=300, num_ctx=8192):
+    # Ollama silently truncates the prompt to num_ctx tokens when it's not set explicitly
+    # (its own default is much smaller than what these models actually support), which was
+    # dropping whole sections of a large task list before the model ever saw them.
     payload = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "think": False,
-        "options": {"temperature": 0.4, "num_predict": num_predict},
+        "options": {"temperature": 0.4, "num_predict": num_predict, "num_ctx": num_ctx},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_BASE}/api/chat",

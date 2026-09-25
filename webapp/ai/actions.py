@@ -32,6 +32,16 @@ LONG_FORM_NUM_PREDICT = {
     "task_plan": 700,
 }
 
+# These same modes get fed the full task list as input, which can itself run into several
+# thousand tokens as the tracker grows. Without an explicit num_ctx, Ollama falls back to a much
+# smaller context window and silently drops whatever doesn't fit, which is what caused whole
+# tasks (including the actual Blocker-status one) to go missing from a generated standup.
+LONG_FORM_NUM_CTX = {
+    "standup": 16384,
+    "daily_summary": 16384,
+    "weekly_summary": 16384,
+}
+
 
 def ai_generate(body, tasks=None):
     mode = body.get("mode", "description")
@@ -75,8 +85,9 @@ def ai_generate(body, tasks=None):
 
     try:
         num_predict = LONG_FORM_NUM_PREDICT.get(mode, 300)
+        num_ctx = LONG_FORM_NUM_CTX.get(mode, 8192)
         timeout = 180 if mode in LONG_FORM_NUM_PREDICT else 90
-        raw = call_ollama(prompt, model, timeout=timeout, num_predict=num_predict)
+        raw = call_ollama(prompt, model, timeout=timeout, num_predict=num_predict, num_ctx=num_ctx)
     except OllamaError as e:
         return {"error": str(e)}
     text = strip_think(raw)
