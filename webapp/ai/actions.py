@@ -21,6 +21,17 @@ CONTEXT_AWARE_MODES = {
     "progress_update", "blocker", "release_note", "task_cleanup", "acceptance_criteria",
 }
 
+# Long-form modes that have to cover many tasks one by one (standup, daily/weekly summaries) get
+# cut off and start compressing/combining tasks under the default 300-token budget. Give them
+# enough room to write a full bullet per task instead.
+LONG_FORM_NUM_PREDICT = {
+    "standup": 1400,
+    "daily_summary": 1200,
+    "weekly_summary": 1600,
+    "root_cause": 700,
+    "task_plan": 700,
+}
+
 
 def ai_generate(body, tasks=None):
     mode = body.get("mode", "description")
@@ -63,7 +74,9 @@ def ai_generate(body, tasks=None):
     prompt = "\n\n".join(preamble_parts) + "\n\n" + prompt_body
 
     try:
-        raw = call_ollama(prompt, model)
+        num_predict = LONG_FORM_NUM_PREDICT.get(mode, 300)
+        timeout = 180 if mode in LONG_FORM_NUM_PREDICT else 90
+        raw = call_ollama(prompt, model, timeout=timeout, num_predict=num_predict)
     except OllamaError as e:
         return {"error": str(e)}
     text = strip_think(raw)

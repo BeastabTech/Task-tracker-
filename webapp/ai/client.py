@@ -9,13 +9,13 @@ class OllamaError(Exception):
     pass
 
 
-def call_ollama(prompt, model, timeout=90):
+def call_ollama(prompt, model, timeout=90, num_predict=300):
     payload = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "think": False,
-        "options": {"temperature": 0.4, "num_predict": 300},
+        "options": {"temperature": 0.4, "num_predict": num_predict},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_BASE}/api/chat",
