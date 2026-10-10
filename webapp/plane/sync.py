@@ -218,7 +218,7 @@ def sync_module_membership(cfg, task):
     issue_id = task.get("plane_issue_id")
     if not issue_id:
         return False
-    should_be_in = is_slack_bug_incident_task(task.get("tags"))
+    should_be_in = is_slack_bug_incident_task(task)
     currently_in = bool(task.get("plane_module_id"))
     if should_be_in == currently_in:
         return False
@@ -295,7 +295,7 @@ def backfill_bug_module():
     data = load_tasks()
     updated, failed, skipped = [], [], []
     for t in data["tasks"]:
-        if not is_slack_bug_incident_task(t.get("tags")):
+        if not is_slack_bug_incident_task(t):
             continue
         issue_id = t.get("plane_issue_id")
         if not issue_id:
@@ -487,7 +487,7 @@ def create_plane_issue(task):
     # from the moment it's first sent to Plane, not only on a later edit (sync_module_membership
     # only ever runs off a subsequent PATCH, which may never come for a task created already Done).
     module_id = module_name = module_url = None
-    if is_slack_bug_incident_task(task.get("tags")):
+    if is_slack_bug_incident_task(task):
         try:
             module = find_plane_module_by_name(cfg, PLANE_BUG_MODULE_NAME)
             if module:

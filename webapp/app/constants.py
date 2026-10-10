@@ -41,9 +41,9 @@ PLANE_ACTIVE_WORK_STATUSES = {"In Progress", "In Review", "Pending", "Blocker"}
 PLANE_BUG_MODULE_NAME = "slack bug / incident"
 
 
-def is_slack_bug_incident_task(tags):
-    tags = tags or []
-    return "Slack Bug" in tags or "Bug" in tags
+def is_slack_bug_incident_task(task):
+    tags = task.get("tags") or []
+    return "Slack Bug" in tags or "Bug" in tags or task.get("type") == "Bug"
 
 LABEL_COLORS = [
     "#F87171", "#FB923C", "#FBBF24", "#A3E635", "#34D399",
