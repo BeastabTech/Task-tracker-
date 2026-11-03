@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import date
 
 from app.config import PLANE_HOST
 from app.constants import (
@@ -100,6 +101,26 @@ def get_active_plane_cycle(cfg):
         return None
 
 
+def get_latest_plane_cycle(cfg):
+    """Fallback for when no cycle is CURRENT (the next weekly cycle hasn't been created in Plane
+    yet): the most recently started cycle, even if it already ended — Plane still accepts new
+    issues into it. Returns {"id": ..., "name": ...} or None. Only used for a task's first push,
+    not by the rollover sweep or per-edit sync, so those never shuffle tasks into a finished cycle."""
+    try:
+        status, data, _ = plane_request(cfg, "GET", f"{wpp(cfg)}/cycles/")
+        if status != 200:
+            return None
+        cycles = data if isinstance(data, list) else (data.get("results") if isinstance(data, dict) else [])
+        today = date.today().isoformat()
+        started = [c for c in cycles or [] if c.get("start_date") and c["start_date"][:10] <= today]
+        if not started:
+            return None
+        cycle = max(started, key=lambda c: c["start_date"])
+        return {"id": cycle["id"], "name": cycle.get("name")}
+    except Exception:
+        return None
+
+
 def roll_open_tasks_to_current_cycle():
     """Plane cycles are weekly — they end and a new one goes CURRENT on their own, but nothing
     automatically carries an unfinished issue over into the new one (same as Jira/Linear sprints:
@@ -182,10 +203,18 @@ def find_plane_module_by_name(cfg, name):
 
 
 def assign_module_to_issue(cfg, issue_id, module_id):
-    """Attaches a Plane module to an issue — same endpoint Plane's own web UI uses
-    (POST .../issues/{id}/modules/ with {"modules":[...], "removed_modules":[]}).
-    This endpoint 404s on the public v1/PAT API - it only exists on the cookie-session
-    API, so force_cookie=True regardless of whether a PAT is configured."""
+    """Attaches a Plane module to an issue. With a PAT, uses the v1 module-issues endpoint
+    (POST .../modules/{id}/module-issues/ with {"issues":[...]}), which needs no browser session
+    and so keeps working after the cookie expires. Otherwise (or if that call fails) falls back
+    to the endpoint Plane's own web UI uses (POST .../issues/{id}/modules/ with
+    {"modules":[...], "removed_modules":[]}), which 404s on the v1/PAT API - it only exists on
+    the cookie-session API, so force_cookie=True there."""
+    if cfg.get("pat"):
+        pat_status, _, _ = plane_request(
+            cfg, "POST", f"{wpp(cfg)}/modules/{module_id}/module-issues/", {"issues": [issue_id]},
+        )
+        if pat_status is not None and pat_status < 300:
+            return {"ok": True}
     status, _, raw = plane_request(
         cfg, "POST", f"{wpp(cfg)}/issues/{issue_id}/modules/",
         {"modules": [module_id], "removed_modules": []},
@@ -198,7 +227,14 @@ def assign_module_to_issue(cfg, issue_id, module_id):
 
 def remove_module_from_issue(cfg, issue_id, module_id):
     """Detaches a Plane module from an issue — same endpoint as assign_module_to_issue,
-    just with modules/removed_modules swapped. Cookie-session API only, same as assign."""
+    just with modules/removed_modules swapped. With a PAT, tries the v1 module-issues DELETE
+    first and falls back to the cookie-session endpoint, same as assign."""
+    if cfg.get("pat"):
+        pat_status, _, _ = plane_request(
+            cfg, "DELETE", f"{wpp(cfg)}/modules/{module_id}/module-issues/{issue_id}/",
+        )
+        if pat_status is not None and pat_status < 300:
+            return {"ok": True}
     status, _, raw = plane_request(
         cfg, "POST", f"{wpp(cfg)}/issues/{issue_id}/modules/",
         {"modules": [], "removed_modules": [module_id]},
@@ -419,9 +455,10 @@ def create_plane_issue(task):
 
     # Only on first push — a task already linked keeps whatever cycle it's in (or was moved to
     # by hand in Plane); re-pushing via Update in Plane must never yank it into "this week's"
-    # cycle. If no cycle is currently active, this is just None and the issue is created without
-    # one, exactly like before.
-    active_cycle = get_active_plane_cycle(cfg)
+    # cycle. If no cycle is currently active (next weekly cycle not created yet), the latest
+    # cycle is used instead; only if Plane has no started cycle at all is the issue created
+    # without one.
+    active_cycle = get_active_plane_cycle(cfg) or get_latest_plane_cycle(cfg)
     active_cycle_id = active_cycle["id"] if active_cycle else None
 
     # Collect label IDs from local project + tags fields — failure is non-fatal
